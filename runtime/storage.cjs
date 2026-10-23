@@ -2,7 +2,6 @@ const fs = require("node:fs");
 const path = require("node:path");
 const os = require("node:os");
 const crypto = require("node:crypto");
-const { Worker } = require("node:worker_threads");
 function dataDirectory() {
   return (
     process.env.LUMEN_DATA_DIR ||
@@ -28,14 +27,16 @@ class LocalStore {
     this.jobs = new Map();
     this.sequence = 0;
     this.writer = null;
+    this.workerUnavailable = false;
+    this.fallbackPending = Promise.resolve();
   }
   encode(value) {
+    return this.encodeJSON(JSON.stringify(value));
+  }
+  encodeJSON(json) {
     const iv = crypto.randomBytes(12);
     const cipher = crypto.createCipheriv("aes-256-gcm", this.key, iv);
-    const data = Buffer.concat([
-      cipher.update(JSON.stringify(value), "utf8"),
-      cipher.final(),
-    ]);
+    const data = Buffer.concat([cipher.update(json, "utf8"), cipher.final()]);
     return Buffer.concat([Buffer.from("LMN1"), iv, cipher.getAuthTag(), data]);
   }
   decode(value) {
@@ -60,9 +61,10 @@ class LocalStore {
     return this.decode(fs.readFileSync(file));
   }
   write(name, value) {
-    // Clone the snapshot now; stringify, encrypt and atomic writes run off the UI thread.
+    // Prefer background serialization where the host supports Node Workers.
     clearTimeout(this.idleTimer);
     const writer = this.writer || this.createWriter();
+    if (!writer) return this.writeFallback(name, value);
     const id = ++this.sequence;
     this.pending = new Promise((resolve, reject) => {
       this.jobs.set(id, { resolve, reject });
@@ -77,14 +79,49 @@ class LocalStore {
     });
     return this.pending;
   }
+  writeFallback(name, value) {
+    // Capture the caller's snapshot before it can change. Embedded Node hosts
+    // may expose worker_threads while rejecting Worker construction entirely.
+    let json;
+    try {
+      json = JSON.stringify(value);
+    } catch (error) {
+      return Promise.reject(error);
+    }
+    this.fallbackPending = this.fallbackPending
+      .catch(() => {})
+      .then(async () => {
+        const data = this.encodeJSON(json);
+        const file = path.join(this.directory, name + ".enc");
+        const temp = file + ".tmp";
+        await fs.promises.writeFile(temp, data, { mode: 0o600 });
+        try {
+          await fs.promises.copyFile(file, file + ".bak");
+        } catch (error) {
+          if (error.code !== "ENOENT") throw error;
+        }
+        await fs.promises.rename(temp, file);
+      });
+    this.pending = this.fallbackPending;
+    return this.pending;
+  }
   createWriter() {
-    const writer = new Worker(path.join(__dirname, "storage-worker.cjs"), {
-      workerData: { directory: this.directory, key: this.key },
-    });
+    if (this.workerUnavailable) return null;
+    let writer;
+    try {
+      const { Worker } = require("node:worker_threads");
+      writer = new Worker(path.join(__dirname, "storage-worker.cjs"), {
+        workerData: { directory: this.directory, key: this.key },
+      });
+    } catch {
+      this.workerUnavailable = true;
+      return null;
+    }
     this.writer = writer;
     const fail = (error) => {
       if (this.writer !== writer) return;
       this.writer = null;
+      this.workerUnavailable = true;
       clearTimeout(this.idleTimer);
       for (const job of this.jobs.values()) job.reject(error);
       this.jobs.clear();

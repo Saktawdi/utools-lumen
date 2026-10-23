@@ -64,6 +64,7 @@ const preview: Bridge = {
   approve: (id, allow) => {
     void api("approve", { id, allow });
   },
+  setToolPermission: (mode) => api("setToolPermission", { mode }),
   exportFile: async (name, content) => {
     const blob = new Blob([content], { type: "application/octet-stream" });
     const url = URL.createObjectURL(blob);

@@ -1274,7 +1274,11 @@ function ToolSettings({
                   </strong>
                   <p>{t.description}</p>
                   {t.approval && (
-                    <small className="approval-hint">执行前由你确认</small>
+                    <small className="approval-hint">
+                      {settings.toolPermission === "always_allow"
+                        ? "Auto · 自动允许"
+                        : "执行前由你确认"}
+                    </small>
                   )}
                 </div>
                 {t.custom && (
@@ -1317,7 +1321,7 @@ function ToolSettings({
       {adding && (
         <div className="custom-tool-editor">
           <p className="sub-description">
-            填写工具定义与 JSON Schema。调用时会展示工具名称和参数，请你确认。
+            填写工具定义与 JSON Schema，执行时遵循输入框的权限模式。
           </p>
           <textarea
             aria-label="工具 JSON 定义"

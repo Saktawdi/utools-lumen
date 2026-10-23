@@ -32,7 +32,11 @@ class ToolRegistry {
       throw new Error("该工具已关闭");
     validateArgs(args, tool.inputSchema);
     if (tool.approval && !(await context.approve(name, args)))
-      return { denied: true, message: "用户未允许此次执行" };
+      return {
+        denied: true,
+        message: "用户拒绝了此次执行。请如实告知，不要更换参数或工具绕过拒绝。",
+      };
+    context.signal?.throwIfAborted();
     return tool.execute(args, context);
   }
 }

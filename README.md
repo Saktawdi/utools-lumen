@@ -13,6 +13,7 @@
 - 每个供应商、搜索服务均可批量导入多个密钥，去重、轮询和失败切换。
 - AnySearch 官方 MCP、Tavily、SearXNG、自定义 JSON 搜索；配置页可测试连接。
 - `list_tools`、时间、计算、网页搜索、网页读取、附件发现和读取；支持注册本地工具和 HTTP 工具。
+- 输入框内单击切换「每次询问 / Auto」。默认对需授权工具逐次确认；Auto 自动允许，等待中的调用也会继续。模式会保留，关闭的工具仍不可执行。
 - 浅色、深色、跟随系统；四款内置皮肤与 JSON 皮肤模块；紧凑布局及减少动态效果。
 - 历史搜索、置顶、重命名、编辑重发、停止、重试、Markdown 导出和 JSON 备份恢复。
 
@@ -50,7 +51,7 @@ npm run package
 
 `dev` 仅供浏览器开发，监听 `127.0.0.1:5178`；安装后的插件直接使用 preload，不依赖此服务。开发服务器默认使用当前用户的本地配置，隔离验证时请设定 `LUMEN_DATA_DIR`。
 
-`test:native` 在 ESM 入口中加载实际构建的 preload，验证 CommonJS 模块边界、存储和工具初始化。`dist/package.json` 必须随插件保留，避免继承根工程的 ESM 模式。
+`test:native` 在 ESM 入口中加载实际构建的 preload，验证 CommonJS 模块边界、存储、权限模式和工具初始化；同时模拟宿主拒绝创建 Worker。`dist/package.json` 必须随插件保留，避免继承根工程的 ESM 模式。
 
 结构：`src/` 界面与状态，`runtime/` 协议、网络、工具和加密存储，`scripts/` 构建与维护，`tests/` 核心回归。扩展指南见 [工具扩展](docs/EXTENSIONS.md) 和 [皮肤模块](docs/SKINS.md)。
 

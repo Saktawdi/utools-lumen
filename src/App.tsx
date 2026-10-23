@@ -36,6 +36,7 @@ import type {
   ModelEntry,
   PluginEntry,
   StreamEvent,
+  ToolPermissionMode,
   ToolInfo,
 } from "./types";
 import {
@@ -128,7 +129,6 @@ export default function App() {
     setModelOpen(false);
     setToolsOpen(false);
   }, []);
-  const closeSettings = useCallback(() => setSettingsOpen(false), []);
   const update = useCallback(
     (updater: AppState | ((s: AppState) => AppState)) => {
       // Keep the persisted snapshot current even before React commits a streamed update.
@@ -162,6 +162,10 @@ export default function App() {
     })();
     await saving.current;
   }, []);
+  const closeSettings = useCallback(() => {
+    setSettingsOpen(false);
+    void persist();
+  }, [persist]);
   const load = useCallback(async () => {
     if (loading.current) return;
     loading.current = true;
@@ -205,6 +209,18 @@ export default function App() {
     const timer = setTimeout(() => void persist(), 750);
     return () => clearTimeout(timer);
   }, [state, ready, busy, persist]);
+  useEffect(() => {
+    if (!ready) return;
+    const timer = setTimeout(() => void persist(), 750);
+    return () => clearTimeout(timer);
+  }, [settings, ready, persist]);
+  useEffect(() => {
+    // Also apply restored/imported preferences to a running Agent.
+    if (!ready || typeof bridge.setToolPermission !== "function") return;
+    void bridge
+      .setToolPermission(settings.toolPermission)
+      .catch((error: Error) => notify(error.message));
+  }, [ready, settings.toolPermission, notify]);
   useEffect(() => {
     // Checkpoint long responses without repeatedly encoding all history.
     const timer = setInterval(() => void persist(), 10000);
@@ -439,6 +455,20 @@ export default function App() {
       ),
     }));
   };
+  const changeToolPermission = async (mode: ToolPermissionMode) => {
+    try {
+      if (typeof bridge.setToolPermission !== "function")
+        throw new Error("请完全退出插件后重新打开，以加载工具权限功能");
+      await bridge.setToolPermission(mode);
+      update((s) => ({
+        ...s,
+        settings: { ...s.settings, toolPermission: mode },
+      }));
+      void persist();
+    } catch (error) {
+      notify((error as Error).message);
+    }
+  };
   async function generate(
     conversation: Conversation,
     messages: Message[],
@@ -537,6 +567,11 @@ export default function App() {
               break;
             case "approval":
               setApproval(event);
+              break;
+            case "approval-resolved":
+              setApproval((current) =>
+                current?.id === event.id ? undefined : current,
+              );
               break;
             case "done":
               if (event.text === "stopped") output.interrupted = true;
@@ -1241,6 +1276,7 @@ export default function App() {
           }}
           busy={busy}
           settings={settings}
+          onToolPermissionChange={(mode) => void changeToolPermission(mode)}
           toolCount={toolCount}
           toolsOpen={toolsOpen}
           setToolsOpen={setToolsOpen}

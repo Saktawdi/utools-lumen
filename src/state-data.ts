@@ -152,9 +152,13 @@ export function parseCustomTool(value: unknown): CustomTool {
 export function mergeState(raw: AppState | null): AppState {
   const initial = freshState();
   if (!raw) return initial;
-  const settings = {
+  const settings: Settings = {
     ...initial.settings,
     ...raw.settings,
+    toolPermission:
+      raw.settings?.toolPermission === "always_allow"
+        ? "always_allow"
+        : "prompt",
     search: { ...initial.settings.search, ...raw.settings?.search },
     skins: raw.settings?.skins?.length
       ? raw.settings.skins
@@ -209,6 +213,12 @@ export function importBackup(
     providers.set(p.id, p);
   }
   const patch: Partial<Settings> = {};
+  if (imported.toolPermission !== undefined) {
+    if (!["prompt", "always_allow"].includes(String(imported.toolPermission)))
+      throw new Error("工具权限模式无效");
+    patch.toolPermission =
+      imported.toolPermission as Settings["toolPermission"];
+  }
   if (imported.theme !== undefined) {
     if (!["light", "dark", "system"].includes(String(imported.theme)))
       throw new Error("显示模式无效");

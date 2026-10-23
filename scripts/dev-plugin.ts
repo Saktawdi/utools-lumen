@@ -81,6 +81,9 @@ export function lumenBridge(): Plugin {
             case "approve":
               core.approve(args.id, args.allow);
               break;
+            case "setToolPermission":
+              core.setToolPermission(args.mode);
+              break;
             default:
               res.statusCode = 404;
               throw new Error("未知操作");

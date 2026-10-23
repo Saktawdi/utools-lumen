@@ -102,6 +102,7 @@ export type CustomTool = {
   method: "POST" | "GET";
   headers?: Record<string, string>;
 };
+export type ToolPermissionMode = "prompt" | "always_allow";
 export type Settings = {
   version: 1;
   providers: Provider[];
@@ -110,6 +111,7 @@ export type Settings = {
   skin: string;
   skins: Skin[];
   disabledTools: string[];
+  toolPermission: ToolPermissionMode;
   customTools: CustomTool[];
   systemPrompt: string;
   translationLanguage: string;
@@ -133,7 +135,8 @@ export type StreamEvent = {
     | "usage"
     | "error"
     | "done"
-    | "approval";
+    | "approval"
+    | "approval-resolved";
   text?: string;
   call?: ToolCall;
   id?: string;
@@ -167,6 +170,7 @@ export type Bridge = {
   ) => Promise<void>;
   stop: () => void;
   approve: (id: string, allow: boolean) => void;
+  setToolPermission: (mode: ToolPermissionMode) => Promise<void>;
   searchTest: (config: SearchConfig, query: string) => Promise<unknown>;
   exportFile: (name: string, content: string) => Promise<void>;
   openExternal: (url: string) => void;

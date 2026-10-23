@@ -30,7 +30,7 @@ module.exports = function registerExtensions(registerTool) {
 
 名称为 1–64 个字符，以字母开头，仅字母、数字、下划线和短横线。名称必须唯一，`execute` 必须是函数，输入 schema 的根类型必须为 `object`。
 
-执行上下文包含 `settings`、`attachments`、`signal` 和 `approve(name,args)`。长操作应响应 `signal`，返回可 JSON 序列化的结果。设置 `approval: true` 后，每次执行前会显示名称与参数，等用户允许。写入文件、外部变更等工具应使用此选项。
+执行上下文包含 `settings`、`attachments`、`signal` 和 `approve(name,args)`。长操作应响应 `signal`，返回可 JSON 序列化的结果。写入文件、外部变更等工具应设置 `approval: true`：在默认的「每次询问」模式下，每次调用显示名称与参数，等用户允许；在输入框切换为 Auto 后自动允许。切换即时生效，Auto 会放行当前等待项，停止会取消等待且阻止工具继续执行。
 
 运行期间可通过 preload 的 `window.lumen.registerTool(definition)` 注册，返回注销函数；前端会收到工具更新事件。此 API 只能用于可信的本地扩展代码。任意网页和模型输出都不能作为执行代码。
 
@@ -57,7 +57,7 @@ module.exports = function registerExtensions(registerTool) {
 }
 ```
 
-支持 `GET` 和 `POST`。GET 将参数编码进查询字符串；POST 发送 JSON。可配置 `headers`，默认不随无密钥备份导出。HTTP 工具每次调用都需要用户确认。
+支持 `GET` 和 `POST`。GET 将参数编码进查询字符串；POST 发送 JSON。可配置 `headers`，默认不随无密钥备份导出。HTTP 工具的确认行为遵循输入框的权限模式。
 
 内置校验覆盖顶层 required、类型、enum 和 additionalProperties；复杂嵌套约束还应由工具服务自行验证。响应支持 JSON 或文本，最多读取 2 MB；工具结果进入对话前另有截断限制。
 

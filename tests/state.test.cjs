@@ -74,6 +74,7 @@ test("malformed imports fail atomically instead of replacing live providers or c
     { providers: [{ keys: [17] }] },
     { providers: [], settings: { skins: [] } },
     { providers: [], settings: { customTools: [{ name: "bad" }] } },
+    { providers: [], settings: { toolPermission: "invalid" } },
     {
       providers: [],
       conversations: [
@@ -87,6 +88,23 @@ test("malformed imports fail atomically instead of replacing live providers or c
   ])
     assert.throws(() => importBackup(raw, original));
   assert.deepEqual(original, snapshot);
+});
+test("tool permission defaults to prompt for old data and survives backup restoration", () => {
+  const original = workspace();
+  assert.equal(original.settings.toolPermission, "prompt");
+  original.settings.toolPermission = "always_allow";
+  const backup = exportBackup(original, false);
+  assert.equal(
+    importBackup(backup, workspace()).state.settings.toolPermission,
+    "always_allow",
+  );
+  assert.equal(
+    mergeState({
+      ...original,
+      settings: { ...original.settings, toolPermission: "invalid" },
+    }).settings.toolPermission,
+    "prompt",
+  );
 });
 test("provider JSON supports legacy apiKey, deduplicates models and merges without losing conversations", () => {
   const original = workspace();

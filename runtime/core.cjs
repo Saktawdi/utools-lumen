@@ -55,6 +55,7 @@ class Core {
     this.store = options.store || new LocalStore(options.directory);
     this.controller = null;
     this.approvals = new Map();
+    this.toolPermission = "prompt";
     this.extraTools = [];
     this.catalogPromise = null;
   }
@@ -187,12 +188,21 @@ class Core {
   }
   stop() {
     this.controller?.abort();
-    for (const resolve of this.approvals.values()) resolve(false);
-    this.approvals.clear();
+    for (const id of this.approvals.keys()) this.approve(id, false);
   }
   approve(id, allow) {
-    this.approvals.get(id)?.(allow);
+    const approval = this.approvals.get(id);
+    if (!approval) return;
     this.approvals.delete(id);
+    approval.resolve(allow === true);
+    approval.onEvent({ type: "approval-resolved", id });
+  }
+  setToolPermission(mode) {
+    if (mode !== "prompt" && mode !== "always_allow")
+      throw new Error("工具权限模式无效");
+    this.toolPermission = mode;
+    if (mode === "always_allow")
+      for (const id of this.approvals.keys()) this.approve(id, true);
   }
   async chat(args, onEvent) {
     if (this.controller) throw new Error("已有请求正在运行");
@@ -200,6 +210,8 @@ class Core {
     this.controller = controller;
     const signal = controller.signal;
     const { provider, model, config, settings } = args;
+    this.toolPermission =
+      settings.toolPermission === "always_allow" ? "always_allow" : "prompt";
     try {
       const registry = this.registry(settings);
       const definitions = registry
@@ -316,13 +328,17 @@ class Core {
               settings,
               signal,
               attachments,
-              approve: (name, args) =>
-                new Promise((resolve) => {
+              approve: (name, args) => {
+                if (this.toolPermission === "always_allow")
+                  return Promise.resolve(!signal.aborted);
+                return new Promise((resolve) => {
                   const id = crypto.randomUUID();
-                  this.approvals.set(id, resolve);
+                  this.approvals.set(id, { resolve, onEvent });
                   onEvent({ type: "approval", id, name, args });
-                }),
+                });
+              },
             });
+            signal.throwIfAborted();
           } catch (e) {
             if (signal.aborted) throw e;
             status = "error";
@@ -357,8 +373,7 @@ class Core {
       throw new Error(cleanError(error, settings));
     } finally {
       this.controller = null;
-      for (const resolve of this.approvals.values()) resolve(false);
-      this.approvals.clear();
+      for (const id of this.approvals.keys()) this.approve(id, false);
     }
   }
 }

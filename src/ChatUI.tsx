@@ -19,6 +19,7 @@ import {
   ScanLine,
   Search,
   ShieldCheck,
+  ShieldQuestion,
   Sparkles,
   Square,
   Wrench,
@@ -32,6 +33,7 @@ import type {
   Settings,
   StreamEvent,
   ToolInfo,
+  ToolPermissionMode,
 } from "./types";
 import { IconButton, Logo, Toggle, cx, usePopoverDismiss } from "./ui";
 export function Welcome({
@@ -464,6 +466,7 @@ export function Composer({
   onStop,
   busy,
   settings,
+  onToolPermissionChange,
   toolCount,
   toolsOpen,
   setToolsOpen,
@@ -487,6 +490,7 @@ export function Composer({
   onStop: () => void;
   busy: boolean;
   settings: Settings;
+  onToolPermissionChange: (mode: ToolPermissionMode) => void;
   toolCount: number;
   toolsOpen: boolean;
   setToolsOpen: (v: boolean) => void;
@@ -711,6 +715,40 @@ export function Composer({
                 </div>
               )}
             </div>
+            <button
+              type="button"
+              className={cx(
+                "composer-pill permission-button",
+                settings.toolPermission === "always_allow" && "active",
+              )}
+              aria-label={`工具权限：${settings.toolPermission === "always_allow" ? "Auto" : "每次询问"}`}
+              aria-pressed={settings.toolPermission === "always_allow"}
+              title={
+                settings.toolPermission === "always_allow"
+                  ? "切换为每次询问"
+                  : "切换为 Auto，自动允许工具执行"
+              }
+              onClick={() => {
+                setReasoning(false);
+                setToolsOpen(false);
+                onToolPermissionChange(
+                  settings.toolPermission === "always_allow"
+                    ? "prompt"
+                    : "always_allow",
+                );
+              }}
+            >
+              {settings.toolPermission === "always_allow" ? (
+                <ShieldCheck size={14} />
+              ) : (
+                <ShieldQuestion size={14} />
+              )}
+              <span>
+                {settings.toolPermission === "always_allow"
+                  ? "Auto"
+                  : "每次询问"}
+              </span>
+            </button>
           </div>
           {busy ? (
             <button

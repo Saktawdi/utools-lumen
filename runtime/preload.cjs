@@ -14,6 +14,7 @@ window.lumen = {
   chat: (args, onEvent) => core.chat(args, onEvent),
   stop: () => core.stop(),
   approve: (id, allow) => core.approve(id, allow),
+  setToolPermission: async (mode) => core.setToolPermission(mode),
   searchTest: (config, query) => core.searchTest(config, query),
   registerTool: (tool) => {
     const remove = core.registerTool(tool);

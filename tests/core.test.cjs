@@ -4,6 +4,7 @@ const fs = require("node:fs");
 const os = require("node:os");
 const path = require("node:path");
 const http = require("node:http");
+const Module = require("node:module");
 const { Readable } = require("node:stream");
 const { sse } = require("../runtime/transport.cjs");
 const { buildRequest, createCollector } = require("../runtime/adapters.cjs");
@@ -411,6 +412,228 @@ test("background saves preserve old data, capture snapshots, and recover after a
     version: 2,
     text: "保存时的内容",
   });
+});
+test("embedded hosts without Workers still persist preferences, preserve snapshots and recover from disk failures", async (t) => {
+  const folder = temporary(t);
+  const filename = path.join(__dirname, "../runtime/storage.cjs");
+  const hostModule = new Module(filename, module);
+  hostModule.filename = filename;
+  let attempts = 0;
+  hostModule.require = (id) =>
+    id === "node:worker_threads"
+      ? {
+          Worker: class {
+            constructor() {
+              attempts++;
+              throw new Error(
+                "Failed to construct 'Worker': The V8 platform used by this instance of Node does not support creating Workers",
+              );
+            }
+          },
+        }
+      : require(id);
+  hostModule._compile(fs.readFileSync(filename, "utf8"), filename);
+  const store = new hostModule.exports.LocalStore(folder);
+  const value = {
+    settings: {
+      sendKey: "ctrl-enter",
+      compact: true,
+      apiKey: "fallback-secret",
+    },
+    conversations: [{ content: "原有对话" }],
+  };
+  const first = store.write("state", value);
+  value.settings.compact = false;
+  const invalid = store.write("state", { unsupported: 1n });
+  const last = store.write("state", { ...value, version: 2 });
+  const results = await Promise.allSettled([first, invalid, last]);
+  assert.deepEqual(
+    results.map((result) => result.status),
+    ["fulfilled", "rejected", "fulfilled"],
+  );
+  assert.equal(attempts, 1, "unsupported Worker is only tried once");
+  const file = path.join(folder, "state.enc");
+  assert.equal(
+    fs.readFileSync(file).includes(Buffer.from("fallback-secret")),
+    false,
+  );
+  assert.equal(
+    store.decode(fs.readFileSync(file + ".bak")).settings.compact,
+    true,
+  );
+  assert.deepEqual(new LocalStore(folder).read("state"), {
+    ...value,
+    version: 2,
+  });
+
+  fs.mkdirSync(file + ".tmp");
+  await assert.rejects(store.write("state", { version: 3 }));
+  assert.equal(
+    store.read("state").version,
+    2,
+    "failed writes preserve the saved file",
+  );
+  fs.rmdirSync(file + ".tmp");
+  await store.write("state", { ...value, version: 4 });
+  assert.equal(new LocalStore(folder).read("state").version, 4);
+  assert.equal(attempts, 1);
+});
+
+async function permissionAgent(t, toolPermission, onEvent, overrides = {}) {
+  const executed = [];
+  const requests = [];
+  const url = await server(t, async (req, res) => {
+    requests.push(await json(req));
+    res.setHeader("Content-Type", "application/json");
+    res.end(
+      JSON.stringify({
+        choices: [
+          {
+            message:
+              requests.length === 1
+                ? {
+                    tool_calls: ["first", "second"].map((value, index) => ({
+                      id: "guard-" + index,
+                      type: "function",
+                      function: {
+                        name: "guarded",
+                        arguments: JSON.stringify({ value }),
+                      },
+                    })),
+                  }
+                : { content: "已完成" },
+          },
+        ],
+      }),
+    );
+  });
+  const core = new Core({ directory: temporary(t) });
+  t.after(() => core.stop());
+  core.registerTool({
+    name: "guarded",
+    title: "Guarded",
+    description: "A tool requiring approval",
+    group: "Test",
+    approval: true,
+    inputSchema: {
+      type: "object",
+      properties: { value: { type: "string" } },
+      required: ["value"],
+    },
+    execute: ({ value }) => {
+      executed.push(value);
+      return value;
+    },
+  });
+  const events = [];
+  await core.chat(
+    {
+      provider: { ...provider, baseURL: url + "/v1" },
+      model: "test",
+      config: {},
+      messages: [],
+      settings: { ...settings, toolPermission, ...overrides },
+    },
+    (event) => {
+      events.push(event);
+      onEvent?.(event, core, executed);
+    },
+  );
+  return { core, events, executed, requests };
+}
+test("prompt mode asks separately for each protected call; deny never executes it", async (t) => {
+  let prompts = 0;
+  const { executed, requests, events } = await permissionAgent(
+    t,
+    undefined,
+    (event, core, calls) => {
+      if (event.type !== "approval") return;
+      assert.equal(calls.length, prompts === 0 ? 0 : 1);
+      core.approve(event.id, prompts++ === 0);
+    },
+  );
+  assert.equal(prompts, 2);
+  assert.deepEqual(executed, ["first"]);
+  const results = requests[1].messages.filter(
+    (message) => message.role === "tool",
+  );
+  assert.equal(JSON.parse(results[1].content).denied, true);
+  assert.equal(
+    events.filter((event) => event.type === "approval-resolved").length,
+    2,
+  );
+});
+test("Auto allows protected calls and switching to prompt applies to the next call in the same response", async (t) => {
+  let prompts = 0;
+  const { executed } = await permissionAgent(
+    t,
+    "always_allow",
+    (event, core, calls) => {
+      if (event.type === "tool-result" && calls.length === 1)
+        core.setToolPermission("prompt");
+      if (event.type === "approval") {
+        prompts++;
+        assert.equal(calls.length, 1);
+        core.approve(event.id, false);
+      }
+    },
+  );
+  assert.equal(prompts, 1);
+  assert.deepEqual(executed, ["first"]);
+});
+test("switching a pending approval to Auto releases it and subsequent calls without another prompt", async (t) => {
+  let prompts = 0;
+  const { executed, core, events } = await permissionAgent(
+    t,
+    "prompt",
+    (event, core, calls) => {
+      if (event.type !== "approval") return;
+      assert.equal(calls.length, 0);
+      prompts++;
+      core.setToolPermission("always_allow");
+    },
+  );
+  assert.equal(prompts, 1);
+  assert.deepEqual(executed, ["first", "second"]);
+  assert.equal(core.approvals.size, 0);
+  assert.equal(
+    events.filter((event) => event.type === "approval-resolved").length,
+    1,
+  );
+});
+test("stopping a pending approval cannot be undone by a late Auto switch or approval", async (t) => {
+  const { executed, core, events } = await permissionAgent(
+    t,
+    "prompt",
+    (event, core) => {
+      if (event.type !== "approval") return;
+      core.stop();
+      core.setToolPermission("always_allow");
+      core.approve(event.id, true);
+    },
+  );
+  assert.deepEqual(executed, []);
+  assert.equal(core.controller, null);
+  assert.equal(core.approvals.size, 0);
+  assert.ok(
+    events.some((event) => event.type === "done" && event.text === "stopped"),
+  );
+});
+test("Auto keeps disabled tools blocked and rejects invalid permission modes", async (t) => {
+  const { executed, events, core } = await permissionAgent(
+    t,
+    "always_allow",
+    null,
+    { disabledTools: ["guarded"] },
+  );
+  assert.deepEqual(executed, []);
+  assert.equal(
+    events.filter(
+      (event) => event.type === "tool-result" && event.call.status === "error",
+    ).length,
+    2,
+  );
+  assert.throws(() => core.setToolPermission("anything"), /权限模式无效/);
 });
 test("agent loop executes real tools, sends tool results upstream and accumulates stream text", async (t) => {
   let turn = 0;
