@@ -321,6 +321,7 @@ function authHeaders(provider, key) {
         ? { Authorization: "Bearer " + key }
         : {};
 }
+const { normalizeUsage } = require("./usage.cjs");
 function createCollector(protocol, onEvent) {
   let text = "",
     reasoning = "",
@@ -384,14 +385,13 @@ function createCollector(protocol, onEvent) {
             tool(data.index, { arguments: d.partial_json });
         }
         if (data.message?.usage)
-          usage = {
-            input: data.message.usage.input_tokens || 0,
-            output: data.message.usage.output_tokens || 0,
-          };
+          usage = normalizeUsage(data.message.usage, "anthropic");
         if (data.usage)
           usage = {
-            input: usage?.input || 0,
-            output: data.usage.output_tokens || 0,
+            ...(usage || { input: 0, output: 0 }),
+            ...(data.usage.output_tokens !== undefined
+              ? { output: data.usage.output_tokens }
+              : {}),
           };
       } else if (protocol === "responses") {
         const type = data.type || event;
@@ -420,11 +420,7 @@ function createCollector(protocol, onEvent) {
         }
         if (type === "response.completed" || type === "response.incomplete") {
           const u = data.response?.usage;
-          if (u)
-            usage = {
-              input: u.input_tokens || 0,
-              output: u.output_tokens || 0,
-            };
+          if (u) usage = normalizeUsage(u, "responses");
           if (type === "response.incomplete")
             onEvent({
               type: "reasoning",
@@ -447,10 +443,7 @@ function createCollector(protocol, onEvent) {
           }
         }
         if (data.usageMetadata)
-          usage = {
-            input: data.usageMetadata.promptTokenCount || 0,
-            output: data.usageMetadata.candidatesTokenCount || 0,
-          };
+          usage = normalizeUsage(data.usageMetadata, "google");
       } else {
         const d = data.choices?.[0]?.delta || data.choices?.[0]?.message || {};
         add("text", typeof d.content === "string" ? d.content : "");
@@ -461,12 +454,11 @@ function createCollector(protocol, onEvent) {
             name: c.function?.name,
             arguments: c.function?.arguments,
           });
-        if (data.usage)
-          usage = {
-            input: data.usage.prompt_tokens || 0,
-            output: data.usage.completion_tokens || 0,
-          };
+        if (data.usage) usage = normalizeUsage(data.usage, "openai");
       }
+    },
+    usage() {
+      return usage;
     },
     result() {
       return {

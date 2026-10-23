@@ -26,6 +26,7 @@ import {
   X,
 } from "lucide-react";
 import { bridge } from "./bridge";
+import { GeneratedImages } from "./ImageAssets";
 import type {
   Attachment,
   Message,
@@ -265,6 +266,9 @@ export const MessageView = memo(function MessageView({
             </div>
           </details>
         ))}
+        {!!m.generatedImages?.length && (
+          <GeneratedImages assets={m.generatedImages} notify={notify} />
+        )}
         {m.content && (
           <div className="message-content">
             {m.role === "user" ? (

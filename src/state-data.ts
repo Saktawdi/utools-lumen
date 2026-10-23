@@ -7,6 +7,7 @@ import type {
   Provider,
   Settings,
   Skin,
+  ImageProvider,
 } from "./types";
 
 const object = (value: unknown): value is Record<string, unknown> =>
@@ -122,6 +123,26 @@ export function parseProvider(value: unknown): Provider {
     headers: headers(value.headers),
   };
 }
+export function parseImageProvider(value: unknown): ImageProvider {
+  if (
+    !object(value) ||
+    !["openai-images", "google-images"].includes(String(value.protocol))
+  )
+    throw new Error("生图供应商协议无效");
+  return {
+    id:
+      typeof value.id === "string" && value.id ? value.id : crypto.randomUUID(),
+    name:
+      typeof value.name === "string" && value.name ? value.name : "生图供应商",
+    protocol: value.protocol as ImageProvider["protocol"],
+    baseURL: httpURL(value.baseURL ?? "", "生图 API 地址"),
+    keys: strings(value.keys ?? [], "生图密钥"),
+    models: strings(value.models ?? [], "生图模型"),
+    availableModels: strings(value.availableModels ?? [], "可用生图模型"),
+    enabled: value.enabled !== false,
+    headers: headers(value.headers),
+  };
+}
 export function parseCustomTool(value: unknown): CustomTool {
   if (
     !object(value) ||
@@ -160,6 +181,7 @@ export function mergeState(raw: AppState | null): AppState {
         ? "always_allow"
         : "prompt",
     search: { ...initial.settings.search, ...raw.settings?.search },
+    imageProviders: raw.settings?.imageProviders || [],
     skins: raw.settings?.skins?.length
       ? raw.settings.skins
       : initial.settings.skins,
@@ -175,6 +197,8 @@ export function exportBackup(state: AppState, includeKeys: boolean) {
   // Reconstruct providers and tools so unknown fields from imported files cannot hide credentials.
   const safe = structuredClone(state);
   safe.settings.providers = state.settings.providers.map(parseProvider);
+  safe.settings.imageProviders =
+    state.settings.imageProviders.map(parseImageProvider);
   safe.settings.customTools = state.settings.customTools.map(parseCustomTool);
   if (!includeKeys) {
     for (const p of safe.settings.providers) {
@@ -182,6 +206,10 @@ export function exportBackup(state: AppState, includeKeys: boolean) {
       p.headers = {};
     }
     safe.settings.search.keys = [];
+    for (const p of safe.settings.imageProviders) {
+      p.keys = [];
+      p.headers = {};
+    }
     for (const t of safe.settings.customTools) t.headers = {};
   }
   return {
@@ -213,6 +241,23 @@ export function importBackup(
     providers.set(p.id, p);
   }
   const patch: Partial<Settings> = {};
+  if (imported.imageProviders !== undefined) {
+    if (!Array.isArray(imported.imageProviders))
+      throw new Error("生图供应商需要为数组");
+    const images = new Map(
+      current.settings.imageProviders.map((p) => [p.id, p]),
+    );
+    for (const raw of imported.imageProviders) {
+      const p = parseImageProvider(raw),
+        old = images.get(p.id);
+      if (data.secretsIncluded === false && old) {
+        p.keys = old.keys;
+        p.headers = old.headers;
+      }
+      images.set(p.id, p);
+    }
+    patch.imageProviders = [...images.values()];
+  }
   if (imported.toolPermission !== undefined) {
     if (!["prompt", "always_allow"].includes(String(imported.toolPermission)))
       throw new Error("工具权限模式无效");
@@ -230,6 +275,7 @@ export function importBackup(
     "skin",
     "systemPrompt",
     "defaultModel",
+    "defaultImageModel",
     "translationLanguage",
   ] as const)
     if (typeof imported[key] === "string") patch[key] = imported[key];
@@ -260,6 +306,7 @@ export function importBackup(
           "fetch_url",
           "list_attachments",
           "read_attachment",
+          "generate_image",
         ].includes(n),
       )
     )
@@ -325,6 +372,25 @@ export function importBackup(
             ))
         )
           throw new Error("附件格式无效");
+        if (
+          m.generatedImages !== undefined &&
+          (!Array.isArray(m.generatedImages) ||
+            m.generatedImages.some(
+              (a) =>
+                !object(a) ||
+                typeof a.id !== "string" ||
+                !/^[a-zA-Z0-9-]{1,80}$/.test(a.id) ||
+                !["image/png", "image/jpeg", "image/webp"].includes(
+                  String(a.mime),
+                ) ||
+                typeof a.size !== "number" ||
+                !Number.isFinite(a.size) ||
+                a.size < 0 ||
+                (a.revisedPrompt !== undefined &&
+                  typeof a.revisedPrompt !== "string"),
+            ))
+        )
+          throw new Error("生成图片记录格式无效");
         if (
           m.tools !== undefined &&
           (!Array.isArray(m.tools) ||

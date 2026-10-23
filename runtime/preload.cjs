@@ -11,6 +11,30 @@ window.lumen = {
   models: (p) => core.models(p),
   catalog: (force) => core.catalog(force),
   tools: async () => core.tools(core.load()?.settings || {}),
+  imageGenerate: (args) => core.imageGenerate(args),
+  imageJobs: async () => core.imageJobs(),
+  imageAsset: async (id, thumbnail) => core.imageAsset(id, thumbnail),
+  imageThumbnail: (id, data) => core.imageThumbnail(id, data),
+  imageCancel: async (id) => core.imageCancel(id),
+  imageRemove: (id) => core.imageRemove(id),
+  imageFavorite: (id, favorite) => core.imageFavorite(id, favorite),
+  usage: () => core.usage(),
+  copyImage: async (id) => {
+    utools.copyImage(core.imageAsset(id));
+  },
+  saveImage: async (id) => {
+    const data = core.imageAsset(id);
+    const match = /^data:(image\/(?:png|jpeg|webp));base64,(.+)$/.exec(data);
+    if (!match) throw new Error("图片数据无效");
+    const ext = match[1] === "image/jpeg" ? "jpg" : match[1].split("/")[1];
+    const file = utools.showSaveDialog({
+      title: "保存生成的图片",
+      defaultPath: `Lumen-${id}.${ext}`,
+      filters: [{ name: "图片", extensions: [ext] }],
+    });
+    if (file)
+      await fs.promises.writeFile(file, Buffer.from(match[2], "base64"));
+  },
   chat: (args, onEvent) => core.chat(args, onEvent),
   stop: () => core.stop(),
   approve: (id, allow) => core.approve(id, allow),
@@ -32,7 +56,7 @@ window.lumen = {
     const file = utools.showSaveDialog({
       title: "导出 Lumen 数据",
       defaultPath: name,
-      filters: [{ name: "JSON / Markdown", extensions: ["json", "md"] }],
+      filters: [{ name: "Lumen 数据", extensions: ["json", "md", "csv"] }],
     });
     if (file) await fs.promises.writeFile(file, content, "utf8");
   },

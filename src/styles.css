@@ -241,6 +241,8 @@ kbd {
   color: #14251d;
 }
 .button.primary:hover:not(:disabled) {
+  background: var(--accent);
+  border-color: transparent;
   filter: brightness(1.06);
   box-shadow: 0 3px 12px var(--soft-accent);
 }

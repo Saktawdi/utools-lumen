@@ -22,7 +22,11 @@ class ToolRegistry {
       enabled:
         tool.name === "list_tools" ||
         (!(settings.disabledTools || []).includes(tool.name) &&
-          (tool.name !== "web_search" || !!settings.search?.enabled)),
+          (tool.name !== "web_search" || !!settings.search?.enabled) &&
+          (tool.name !== "generate_image" ||
+            !!settings.imageProviders?.some(
+              (p) => p.enabled && p.models?.length,
+            ))),
     }));
   }
   async execute(name, args, context) {
@@ -125,6 +129,54 @@ function builtins() {
     group: "基础能力",
     inputSchema: schema({}),
     execute: (_, { settings }) => registry.list(settings),
+  });
+  register({
+    name: "generate_image",
+    title: "生成图片",
+    description:
+      "根据文字生成图片，或使用 referenceIds 中的用户图片附件 / 已生成图片 ID 改图。结果自动显示给用户并保存到工作室画廊。使用独立生图供应商，可产生费用。",
+    group: "生图工作室",
+    approval: true,
+    inputSchema: {
+      ...schema({
+        prompt: {
+          type: "string",
+          description: "完整画面描述，改图时说明保留与修改的内容",
+        },
+        providerId: {
+          type: "string",
+          description: "可选，默认使用配置的生图供应商",
+        },
+        model: { type: "string" },
+        size: {
+          type: "string",
+          description:
+            "auto / 1024x1024 / 1536x1024 / 1024x1536，Gemini 使用 1:1 等比例",
+        },
+        quality: {
+          type: "string",
+          enum: [
+            "auto",
+            "low",
+            "medium",
+            "high",
+            "xhigh",
+            "max",
+            "standard",
+            "hd",
+          ],
+        },
+        background: { type: "string", enum: ["auto", "opaque", "transparent"] },
+        count: { type: "integer", description: "1–4 张，Gemini 仅支持 1 张" },
+        referenceIds: {
+          type: "array",
+          items: { type: "string" },
+          description: "最多 4 个参考图 ID",
+        },
+      }),
+      required: ["prompt"],
+    },
+    execute: (args, context) => context.generateImage(args),
   });
   register({
     name: "current_time",

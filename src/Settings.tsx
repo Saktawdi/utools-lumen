@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { lazy, Suspense, useEffect, useMemo, useRef, useState } from "react";
 import {
   ArrowDownToLine,
   ArrowUpFromLine,
@@ -23,6 +23,8 @@ import {
   Waypoints,
   Wrench,
   X,
+  ImagePlus,
+  ChartNoAxesCombined,
 } from "lucide-react";
 import { bridge } from "./bridge";
 import { newProvider } from "./defaults";
@@ -52,7 +54,9 @@ import {
   cx,
 } from "./ui";
 export type SettingsTab =
-  "providers" | "search" | "appearance" | "tools" | "data";
+  "providers" | "images" | "usage" | "search" | "appearance" | "tools" | "data";
+const ImageSettings = lazy(() => import("./ImageSettings"));
+const UsageSettings = lazy(() => import("./UsageSettings"));
 type ProviderPatch =
   Partial<Provider> | ((current: Provider) => Partial<Provider>);
 type Props = {
@@ -65,6 +69,8 @@ type Props = {
 };
 const tabs = [
   { id: "providers", label: "供应商与模型", icon: Waypoints },
+  { id: "images", label: "生图供应商", icon: ImagePlus },
+  { id: "usage", label: "Token 统计", icon: ChartNoAxesCombined },
   { id: "search", label: "网页搜索", icon: Globe2 },
   { id: "tools", label: "工具扩展", icon: Wrench },
   { id: "appearance", label: "外观与皮肤", icon: Palette },
@@ -84,10 +90,17 @@ export default function Settings({
   );
   const [busy, setBusy] = useState("");
   const settings = state.settings;
-  const update = (patch: Partial<SettingsType>) =>
+  const update = (
+    patch:
+      | Partial<SettingsType>
+      | ((current: SettingsType) => Partial<SettingsType>),
+  ) =>
     onChange((current) => ({
       ...current,
-      settings: { ...current.settings, ...patch },
+      settings: {
+        ...current.settings,
+        ...(typeof patch === "function" ? patch(current.settings) : patch),
+      },
     }));
   const provider =
     settings.providers.find((p) => p.id === selected) || settings.providers[0];
@@ -148,6 +161,32 @@ export default function Settings({
             <CloseButton onClose={onClose} />
           </header>
           <div className="settings-content">
+            {tab === "images" && (
+              <Suspense
+                fallback={
+                  <div className="settings-empty">
+                    <Loader2 size={22} className="spin" />
+                  </div>
+                }
+              >
+                <ImageSettings
+                  settings={settings}
+                  update={update}
+                  notify={notify}
+                />
+              </Suspense>
+            )}
+            {tab === "usage" && (
+              <Suspense
+                fallback={
+                  <div className="settings-empty">
+                    <Loader2 size={22} className="spin" />
+                  </div>
+                }
+              >
+                <UsageSettings notify={notify} />
+              </Suspense>
+            )}
             {tab === "providers" && (
               <>
                 <p className="section-description">

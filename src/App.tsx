@@ -1,4 +1,12 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import {
+  lazy,
+  Suspense,
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 import {
   ArrowDown,
   ArrowDownToLine,
@@ -21,6 +29,7 @@ import {
   Sun,
   Trash2,
   X,
+  WandSparkles,
 } from "lucide-react";
 import { bridge, mergeState } from "./bridge";
 import { freshState } from "./defaults";
@@ -56,6 +65,7 @@ import {
   providerEntries,
 } from "./ui";
 const id = () => crypto.randomUUID();
+const Studio = lazy(() => import("./Studio"));
 const makeConversation = (): Conversation => ({
   id: id(),
   title: "新对话",
@@ -84,6 +94,8 @@ export default function App() {
   const [searchOpen, setSearchOpen] = useState(false);
   const [searchQuery, setSearchQuery] = useState("");
   const [sidebar, setSidebar] = useState(true);
+  const [view, setView] = useState<"chat" | "studio">("chat");
+  const [studioVisited, setStudioVisited] = useState(false);
   const [modelKey, setModelKey] = useState("");
   const [effort, setEffort] = useState("auto");
   const [busy, setBusy] = useState(false);
@@ -263,6 +275,7 @@ export default function App() {
   const focusComposer = () =>
     setTimeout(() => window.dispatchEvent(new Event("lumen-focus")), 30);
   const newChat = useCallback(() => {
+    setView("chat");
     update((s) => ({ ...s, activeId: undefined }));
     setDraft("");
     setAttachments([]);
@@ -280,6 +293,7 @@ export default function App() {
   }, [update]);
   const selectConversation = useCallback(
     (c: Conversation) => {
+      setView("chat");
       update((s) => ({ ...s, activeId: c.id }));
       setEffort(c.effort || "auto");
       if (c.modelKey) setModelKey(c.modelKey);
@@ -322,6 +336,14 @@ export default function App() {
   useEffect(() => {
     if (atBottom && busy) tail.current?.scrollIntoView({ behavior: "instant" });
   }, [active?.messages, atBottom, busy]);
+  useEffect(() => {
+    const loaded = () => {
+      if (atBottom && view === "chat")
+        tail.current?.scrollIntoView({ behavior: "instant" });
+    };
+    window.addEventListener("lumen-image-loaded", loaded);
+    return () => window.removeEventListener("lumen-image-loaded", loaded);
+  }, [atBottom, view]);
   const addFiles = useCallback(
     async (files: File[]) => {
       const incoming: Attachment[] = [];
@@ -408,12 +430,22 @@ export default function App() {
           tool.name === "list_tools" ||
           (!settings.disabledTools.includes(tool.name) &&
             (tool.name !== "web_search" || settings.search.enabled)),
+        ...(tool.name === "generate_image"
+          ? {
+              enabled:
+                !settings.disabledTools.includes(tool.name) &&
+                settings.imageProviders.some(
+                  (p) => p.enabled && p.models.length > 0,
+                ),
+            }
+          : {}),
       })),
     [
       baseTools,
       settings.customTools,
       settings.disabledTools,
       settings.search.enabled,
+      settings.imageProviders,
     ],
   );
   const toolCount = tools.filter((t) => t.enabled).length;
@@ -564,6 +596,12 @@ export default function App() {
               break;
             case "usage":
               output.usage = event.usage;
+              break;
+            case "images":
+              output.generatedImages = [
+                ...(output.generatedImages || []),
+                ...(event.images || []),
+              ];
               break;
             case "approval":
               setApproval(event);
@@ -876,6 +914,23 @@ export default function App() {
           <span>搜索对话</span>
           <kbd>Ctrl K</kbd>
         </button>
+        <button
+          className={cx(
+            "history-search",
+            "studio-entry",
+            view === "studio" && "active",
+          )}
+          onClick={() => {
+            setStudioVisited(true);
+            setView("studio");
+          }}
+          aria-label="打开生图工作室"
+          aria-current={view === "studio" ? "page" : undefined}
+        >
+          <WandSparkles size={16} />
+          <span>生图工作室</span>
+          <span className="sidebar-beta">BETA</span>
+        </button>
         <div className="history-heading">
           <span>你的对话</span>
           <span>
@@ -899,7 +954,7 @@ export default function App() {
             <div
               className={cx(
                 "history-item",
-                c.id === state.activeId && "active",
+                view === "chat" && c.id === state.activeId && "active",
               )}
               key={c.id}
             >
@@ -1028,6 +1083,7 @@ export default function App() {
       exportConversation,
       settings.providers,
       openSettings,
+      view,
     ],
   );
   if (loadError)
@@ -1083,7 +1139,31 @@ export default function App() {
       }}
     >
       {sidebarView}
-      <main className={cx("main", !active?.messages.length && "empty-chat")}>
+      {studioVisited && (
+        <Suspense
+          fallback={
+            view === "studio" ? (
+              <div className="studio-loading">
+                <Loader2 size={24} className="spin" />
+              </div>
+            ) : null
+          }
+        >
+          <Studio
+            hidden={view !== "studio"}
+            settings={settings}
+            sidebar={sidebar}
+            onSidebar={() => setSidebar(true)}
+            onChat={() => setView("chat")}
+            onSettings={() => openSettings("images")}
+            notify={notify}
+          />
+        </Suspense>
+      )}
+      <main
+        style={view === "studio" ? { display: "none" } : undefined}
+        className={cx("main", !active?.messages.length && "empty-chat")}
+      >
         <header className="topbar">
           <div className="topbar-left">
             {!sidebar && (

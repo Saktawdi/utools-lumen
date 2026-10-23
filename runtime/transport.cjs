@@ -43,7 +43,7 @@ function request(url, options = {}, redirects = 0) {
     const body =
       options.body === undefined
         ? undefined
-        : typeof options.body === "string"
+        : typeof options.body === "string" || Buffer.isBuffer(options.body)
           ? options.body
           : JSON.stringify(options.body);
     const req = (target.protocol === "https:" ? https : http).request(
@@ -95,7 +95,7 @@ function request(url, options = {}, redirects = 0) {
           status: response.statusCode,
           headers: response.headers,
           body: response,
-          async text(max = 20 * 1024 * 1024) {
+          async buffer(max = 20 * 1024 * 1024) {
             let size = 0;
             const chunks = [];
             for await (const chunk of response) {
@@ -106,16 +106,19 @@ function request(url, options = {}, redirects = 0) {
               }
               chunks.push(chunk);
             }
-            return Buffer.concat(chunks).toString("utf8");
+            return Buffer.concat(chunks);
           },
-          async json() {
-            return JSON.parse(await this.text());
+          async text(max) {
+            return (await this.buffer(max)).toString("utf8");
+          },
+          async json(max) {
+            return JSON.parse(await this.text(max));
           },
         };
         resolve(output);
       },
     );
-    req.setTimeout(90000, () =>
+    req.setTimeout(options.timeout || 90000, () =>
       req.destroy(new Error("连接超时，请检查供应商地址或网络")),
     );
     req.on("error", reject);

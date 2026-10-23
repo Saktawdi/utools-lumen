@@ -46,6 +46,9 @@ globalThis.utools = {
     assert.equal(image, captureResult);
     calls.push("copy");
   },
+  showSaveDialog({ defaultPath }) {
+    return path.join(directory, path.basename(defaultPath));
+  },
 };
 try {
   await import(pathToFileURL(path.resolve("dist/preload.js")).href);
@@ -97,8 +100,33 @@ try {
   };
   await assert.rejects(window.lumen.captureScreen(), /cancelled/);
   assert.deepEqual(calls, ["hide", "show"]);
+  calls.splice(0);
+  assert.deepEqual(await window.lumen.imageJobs(), []);
+  assert.equal(typeof window.lumen.imageGenerate, "function");
+  const imageId = "native-image-test";
+  const imageData =
+    "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+jf9kAAAAASUVORK5CYII=";
+  captureResult = "data:image/png;base64," + imageData;
+  const imageStore = new LocalStore(directory);
+  await imageStore.write("image-" + imageId, { data: captureResult });
+  assert.equal(await window.lumen.imageAsset(imageId), captureResult);
+  await window.lumen.imageThumbnail(imageId, captureResult);
+  assert.equal(await window.lumen.imageAsset(imageId, true), captureResult);
+  await window.lumen.copyImage(imageId);
+  assert.deepEqual(calls, ["copy"]);
+  await window.lumen.saveImage(imageId);
+  assert.deepEqual(
+    fs.readFileSync(path.join(directory, `Lumen-${imageId}.png`)),
+    Buffer.from(imageData, "base64"),
+  );
+  assert.deepEqual((await window.lumen.usage()).records, []);
+  await window.lumen.exportFile("usage.csv", "input,output\n1,2");
+  assert.equal(
+    fs.readFileSync(path.join(directory, "usage.csv"), "utf8"),
+    "input,output\n1,2",
+  );
   console.log(
-    `preload 检查通过（${noWorkers ? "Worker 不可用" : "Worker 可用"}）：存储、权限模式、工具注册、快捷指令队列、截图复制及取消恢复`,
+    `preload 检查通过（${noWorkers ? "Worker 不可用" : "Worker 可用"}）：存储、权限、工具、快捷指令、截图、生图资产/缩略图、图片保存/复制、用量与 CSV`,
   );
 } finally {
   fs.rmSync(directory, { recursive: true, force: true });
