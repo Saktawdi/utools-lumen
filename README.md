@@ -2,6 +2,8 @@
 
 轻量的 uTools BYOK Agent 聊天插件。图片直接粘贴，模型自由切换，工具按需扩展。无需常驻服务。
 
+> 当前为开发预览；uTools 快捷指令与完整离线安装流程仍需实机验收，尚无正式市场发行版。
+
 ## 使用
 
 在 uTools 搜索 **Lumen** 或 **流明** 打开。进入左下角「我的工作空间」添加供应商、API 地址和密钥；拉取模型后，勾选常用模型加入启动列表。在聊天顶部可切换任意启动模型。
@@ -31,7 +33,7 @@
 
 ## 本地安装
 
-需要 uTools 8。在「uTools 开发者工具」中新建插件项目，选择「导入源码工程」，导入构建目录的 `plugin.json`，再「接入开发」并打开。开发者工具里的「构建离线安装包」生成 `.upxs`；将该包拖入 uTools 可正常安装。
+需要 uTools 8。在「uTools 开发者工具」中新建插件项目，选择「导入源码工程」，导入构建目录的 `plugin.json`，再「接入开发」并运行。若要生成 `.upxs`，请在 uTools 开发者工具中使用「构建离线安装包」；本仓库尚未发布 `.upxs` 或 uTools 市场版本。
 
 工程中的 `release/lumen-0.1.0-local.zip` 是可解压导入的源码构建包。ZIP 内 `Lumen/plugin.json` 是导入入口。ZIP 无需 Node 环境，且不包含个人配置。
 
@@ -39,7 +41,7 @@
 
 ## 开发
 
-Node.js 20.19+：
+Node.js 22.12+：
 
 ```sh
 npm ci
@@ -53,7 +55,7 @@ npm run package
 
 `test:native` 在 ESM 入口中加载实际构建的 preload，验证 CommonJS 模块边界、存储、权限模式和工具初始化；同时模拟宿主拒绝创建 Worker。`dist/package.json` 必须随插件保留，避免继承根工程的 ESM 模式。
 
-结构：`src/` 界面与状态，`runtime/` 协议、网络、工具和加密存储，`scripts/` 构建与维护，`tests/` 核心回归。扩展指南见 [工具扩展](docs/EXTENSIONS.md) 和 [皮肤模块](docs/SKINS.md)。
+结构：`src/` 界面与状态，`runtime/` 协议、网络、工具和加密存储，`scripts/` 构建与维护，`tests/` 核心回归。仓库中的 `docs/` 为本地开发文档，不属于公开项目。
 
 ## 数据
 
@@ -63,8 +65,14 @@ JSON 备份默认不含供应商、搜索和 HTTP 工具的密钥或请求头。
 
 模型请求发送给选定供应商；搜索请求发送给配置的搜索服务；网页和 HTTP 工具发送给其目标地址。Lumen 不设置自己的遥测或中转服务。
 
+更详细的数据处理说明见 [隐私说明](PRIVACY.md)。
+
 ## 参考
 
 模型管理与严格参数匹配交互参考 [opentreelearn](https://github.com/Saktawdi/opentreelearn)，独立实现。能力元数据来自 [models.dev](https://models.dev)，作为设置辅助，实际能力以供应商为准。
 
 当前验证平台为 Windows / uTools 8.0.1。其他系统尚未进行宿主实测。
+
+## 许可证
+
+项目使用 [MIT License](LICENSE)。本地构建包附有生产依赖许可证清单 `THIRD_PARTY_NOTICES.txt`。
