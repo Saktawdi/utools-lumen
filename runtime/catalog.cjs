@@ -20,18 +20,56 @@ function flattenCatalog(raw) {
   }
   return result;
 }
+const canonical = new Set([
+  "openai",
+  "anthropic",
+  "google",
+  "deepseek",
+  "alibaba",
+  "moonshotai",
+  "xai",
+  "mistral",
+  "cohere",
+  "zai",
+  "minimax",
+]);
+const cache = new WeakMap();
 function matchModel(id, entries) {
-  const rows = Object.values(entries);
   const steps = [
     (v) => normalize(v),
     (v) => normalize(strip(v)),
     (v) => normalize(bare(v)),
     (v) => normalize(strip(bare(v))),
   ];
-  for (const key of steps) {
+  let indexes = cache.get(entries);
+  if (!indexes) {
+    indexes = steps.map(() => new Map());
+    for (const model of Object.values(entries)) {
+      if (!model || typeof model.id !== "string") continue;
+      steps.forEach((key, i) => {
+        const value = key(model.id);
+        const rows = indexes[i].get(value) || [];
+        rows.push(model);
+        indexes[i].set(value, rows);
+      });
+    }
+    cache.set(entries, indexes);
+  }
+  for (let i = 0; i < steps.length; i++) {
+    const key = steps[i];
     const target = key(id);
-    const matches = rows.filter((m) => key(m.id || "") === target);
+    const matches = indexes[i].get(target) || [];
     if (!matches.length) continue;
+    const explicit = id.includes("/")
+      ? matches.find(
+          (m) => normalize(m.providerId || "") === normalize(id.split("/")[0]),
+        )
+      : undefined;
+    const originals = matches.filter((m) =>
+      canonical.has(normalize(m.providerId || "")),
+    );
+    if (explicit || originals.length === 1)
+      return toConfig(explicit || originals[0]);
     const signatures = new Set(
       matches.map((m) =>
         JSON.stringify([
@@ -39,6 +77,8 @@ function matchModel(id, entries) {
           m.tool_call,
           m.modalities?.input,
           m.limit?.context,
+          m.limit?.output,
+          m.reasoning_options,
         ]),
       ),
     );

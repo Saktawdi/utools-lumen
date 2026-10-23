@@ -15,23 +15,64 @@ const strip = (id: string) =>
     /(?:[-_]?\d{4}[-_]?\d{2}[-_]?\d{2}|[-_.]v\d+(?:\.\d+)*|[-_](?:latest|preview|stable|nightly))$/i,
     "",
   );
+const canonical = new Set([
+  "openai",
+  "anthropic",
+  "google",
+  "deepseek",
+  "alibaba",
+  "moonshotai",
+  "xai",
+  "mistral",
+  "cohere",
+  "zai",
+  "minimax",
+]);
+const steps = [
+  (v: string) => norm(v),
+  (v: string) => norm(strip(v)),
+  (v: string) => norm(bare(v)),
+  (v: string) => norm(strip(bare(v))),
+];
+const cache = new WeakMap<object, Map<string, Entry[]>[]>();
 export function matchModel(
   id: string,
   raw: Record<string, unknown>,
 ): ModelConfig | null {
-  const entries = Object.values(raw).filter(
-    (x): x is Entry =>
-      !!x && typeof x === "object" && typeof (x as Entry).id === "string",
-  );
+  let indexes = cache.get(raw);
+  if (!indexes) {
+    indexes = steps.map(() => new Map<string, Entry[]>());
+    for (const entry of Object.values(raw)) {
+      if (
+        !entry ||
+        typeof entry !== "object" ||
+        typeof (entry as Entry).id !== "string"
+      )
+        continue;
+      const model = entry as Entry;
+      steps.forEach((key, i) => {
+        const value = key(model.id);
+        const rows = indexes![i].get(value) || [];
+        rows.push(model);
+        indexes![i].set(value, rows);
+      });
+    }
+    cache.set(raw, indexes);
+  }
   let selected: Entry | undefined;
-  for (const key of [
-    (v: string) => norm(v),
-    (v: string) => norm(strip(v)),
-    (v: string) => norm(bare(v)),
-    (v: string) => norm(strip(bare(v))),
-  ]) {
-    const matches = entries.filter((m) => key(m.id) === key(id));
+  for (let i = 0; i < steps.length; i++) {
+    const matches = indexes[i].get(steps[i](id)) || [];
     if (!matches.length) continue;
+    const explicit = id.includes("/")
+      ? matches.find((m) => norm(m.providerId || "") === norm(id.split("/")[0]))
+      : undefined;
+    const originals = matches.filter((m) =>
+      canonical.has(norm(m.providerId || "")),
+    );
+    if (explicit || originals.length === 1) {
+      selected = explicit || originals[0];
+      break;
+    }
     const signatures = new Set(
       matches.map((m) =>
         JSON.stringify([
@@ -39,6 +80,8 @@ export function matchModel(
           m.tool_call,
           m.modalities?.input,
           m.limit?.context,
+          m.limit?.output,
+          m.reasoning_options,
         ]),
       ),
     );
@@ -64,7 +107,7 @@ export function matchModel(
     if (option.type === "budget") reasoningMode = "budget";
   }
   return {
-    vision: m.modalities?.input?.includes("image"),
+    vision: (m.modalities?.input || []).includes("image"),
     reasoning: m.reasoning === true,
     tools: m.tool_call !== false,
     context: m.limit?.context,
