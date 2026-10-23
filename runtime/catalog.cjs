@@ -6,7 +6,7 @@ function bare(id) {
 }
 function strip(id) {
   return id.replace(
-    /(?:[-_]?\d{4}[-_]?\d{2}[-_]?\d{2}|[-_.]v\d+(?:\.\d+)*|[-_](?:latest|preview|stable|nightly))$/i,
+    /(?:[-_]?\d{4}[-_]?\d{2}[-_]?\d{2}|[-_](?:latest|preview|stable|nightly))$/i,
     "",
   );
 }

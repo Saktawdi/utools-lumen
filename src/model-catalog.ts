@@ -12,7 +12,7 @@ const norm = (id: string) => id.toLowerCase().replace(/[^a-z0-9]/g, "");
 const bare = (id: string) => id.slice(id.lastIndexOf("/") + 1);
 const strip = (id: string) =>
   id.replace(
-    /(?:[-_]?\d{4}[-_]?\d{2}[-_]?\d{2}|[-_.]v\d+(?:\.\d+)*|[-_](?:latest|preview|stable|nightly))$/i,
+    /(?:[-_]?\d{4}[-_]?\d{2}[-_]?\d{2}|[-_](?:latest|preview|stable|nightly))$/i,
     "",
   );
 const canonical = new Set([

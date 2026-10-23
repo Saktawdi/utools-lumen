@@ -22,6 +22,20 @@ for (const [name, match] of [
   ["runtime", nativeMatch],
 ]) {
   test(
+    name + " keeps architecture versions distinct while allowing a dated alias",
+    () => {
+      const entries = {
+        original: {
+          id: "deepseek-v3",
+          providerId: "deepseek",
+          limit: { context: 64000 },
+        },
+      };
+      assert.equal(match("deepseek-v4", entries), null);
+      assert.equal(match("deepseek-v3-2026-05-14", entries).context, 64000);
+    },
+  );
+  test(
     name +
       " model metadata prefers the original publisher and honors explicit namespaces",
     () => {
