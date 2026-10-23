@@ -1,0 +1,44 @@
+{
+  "pluginName": "Lumen · 流明",
+  "name": "lumen-local-chat",
+  "description": "轻量、精致的 BYOK Agent 聊天空间。图片、模型、工具与灵感，自由连接。",
+  "version": "0.1.0",
+  "author": "Saktawdi",
+  "main": "index.html",
+  "preload": "preload.js",
+  "logo": "logo.png",
+  "platform": ["win32", "darwin", "linux"],
+  "pluginSetting": { "single": true, "height": 720 },
+  "features": [
+    {
+      "code": "chat",
+      "explain": "打开 Lumen，与自己的模型聊天",
+      "cmds": [
+        "Lumen",
+        "流明",
+        "lumen chat",
+        { "type": "over", "label": "用 Lumen 聊聊" },
+        { "type": "img", "label": "用 Lumen 看图" }
+      ]
+    },
+    {
+      "code": "translate",
+      "explain": "将选中文字翻译为目标语言",
+      "cmds": ["AI翻译", "ai translate", { "type": "over", "label": "AI翻译" }]
+    },
+    {
+      "code": "screenshot-translate",
+      "explain": "框选截图并翻译，截图同时复制到剪贴板",
+      "cmds": [
+        "AI截图翻译",
+        "ai screenshot translate",
+        { "type": "img", "label": "AI截图翻译" }
+      ]
+    },
+    {
+      "code": "ask",
+      "explain": "用默认 Agent 回答选中文字",
+      "cmds": ["AI问答", "ai ask", { "type": "over", "label": "AI问答" }]
+    }
+  ]
+}
