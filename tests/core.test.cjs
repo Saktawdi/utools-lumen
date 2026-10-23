@@ -388,6 +388,30 @@ test("encrypted atomic store roundtrips secrets and chat state without plaintext
   tampered[tampered.length - 1] ^= 1;
   assert.throws(() => store.decode(tampered));
 });
+
+test("background saves preserve old data, capture snapshots, and recover after a failed queued save", async (t) => {
+  const folder = temporary(t);
+  const store = new LocalStore(folder);
+  const file = path.join(folder, "state.enc");
+  fs.writeFileSync(file, store.encode({ version: 1, text: "已有数据" }));
+  assert.equal(store.read("state").version, 1);
+
+  const snapshot = { version: 2, text: "保存时的内容" };
+  const first = store.write("state", snapshot);
+  snapshot.text = "调用后的修改";
+  const invalid = store.write("state", { unsupported: 1n });
+  const last = store.write("state", { version: 3, text: "最终内容" });
+  const results = await Promise.allSettled([first, invalid, last]);
+  assert.deepEqual(
+    results.map((result) => result.status),
+    ["fulfilled", "rejected", "fulfilled"],
+  );
+  assert.deepEqual(store.read("state"), { version: 3, text: "最终内容" });
+  assert.deepEqual(store.decode(fs.readFileSync(file + ".bak")), {
+    version: 2,
+    text: "保存时的内容",
+  });
+});
 test("agent loop executes real tools, sends tool results upstream and accumulates stream text", async (t) => {
   let turn = 0;
   const received = [];

@@ -104,6 +104,7 @@ export default function App() {
   const scroll = useRef<HTMLDivElement>(null);
   const tail = useRef<HTMLDivElement>(null);
   const dirty = useRef(false);
+  const saving = useRef<Promise<void> | undefined>(undefined);
   const loading = useRef(false);
   const sending = useRef(false);
   const settings = state.settings;
@@ -139,16 +140,27 @@ export default function App() {
     },
     [],
   );
-  const persist = useCallback(async () => {
+  const persist = useCallback(async function persistState(): Promise<void> {
+    if (saving.current) {
+      await saving.current;
+      if (dirty.current) await persistState();
+      return;
+    }
     if (!dirty.current) return;
     dirty.current = false;
-    try {
-      await bridge.save(stateRef.current);
-      setSaveError("");
-    } catch (e) {
-      dirty.current = true;
-      setSaveError((e as Error).message);
-    }
+    const snapshot = stateRef.current;
+    saving.current = (async () => {
+      try {
+        await bridge.save(snapshot);
+        setSaveError("");
+      } catch (e) {
+        dirty.current = true;
+        setSaveError((e as Error).message);
+      } finally {
+        saving.current = undefined;
+      }
+    })();
+    await saving.current;
   }, []);
   const load = useCallback(async () => {
     if (loading.current) return;
@@ -189,12 +201,13 @@ export default function App() {
     [notify],
   );
   useEffect(() => {
-    if (!ready) return;
-    const timer = setTimeout(() => void persist(), 450);
+    if (!ready || busy) return;
+    const timer = setTimeout(() => void persist(), 750);
     return () => clearTimeout(timer);
-  }, [state, ready, persist]);
+  }, [state, ready, busy, persist]);
   useEffect(() => {
-    const timer = setInterval(() => void persist(), 1500);
+    // Checkpoint long responses without repeatedly encoding all history.
+    const timer = setInterval(() => void persist(), 10000);
     return () => clearInterval(timer);
   }, [persist]);
   useEffect(() => {
@@ -330,7 +343,6 @@ export default function App() {
               !/\.(txt|md|json|csv|ts|tsx|js|jsx|py|html|css|xml|ya?ml|log|sql|sh|toml|ini|c|cpp|h|rs|go|java)$/i.test(
                 file.name,
               ) &&
-              file.type &&
               !file.type.startsWith("text/")
             ) {
               notify(`${file.name} 暂不支持。可添加文本、代码或图片。`);
@@ -717,93 +729,89 @@ export default function App() {
     } else if (entry.type === "files")
       notify("请将文件拖入聊天或使用附件按钮添加。");
   };
-  function retry(messageId: string) {
-    if (busy) {
-      notify("请先停止当前生成");
-      return;
-    }
-    if (!active) return;
-    const index = active.messages.findIndex((m) => m.id === messageId);
-    void generate(active, active.messages.slice(0, index));
-  }
-  const sorted = [...state.conversations].sort(
-    (a, b) =>
-      Number(!!b.pinned) - Number(!!a.pinned) || b.updatedAt - a.updatedAt,
+  const generateRef = useRef(generate);
+  generateRef.current = generate;
+  const retry = useCallback(
+    (messageId: string) => {
+      if (sending.current) {
+        notify("请先停止当前生成");
+        return;
+      }
+      const current = stateRef.current;
+      const conversation = current.conversations.find(
+        (c) => c.id === current.activeId,
+      );
+      if (!conversation) return;
+      const index = conversation.messages.findIndex((m) => m.id === messageId);
+      if (index >= 0)
+        void generateRef.current(
+          conversation,
+          conversation.messages.slice(0, index),
+        );
+    },
+    [notify],
   );
-  const searchResults = sorted.filter((c) =>
-    (c.title + " " + c.messages.map((m) => m.content).join(" "))
-      .toLowerCase()
-      .includes(searchQuery.toLowerCase()),
+  const editMessage = useCallback(
+    (messageId: string) => {
+      if (sending.current) {
+        notify("请先停止当前生成");
+        return;
+      }
+      const current = stateRef.current;
+      const conversation = current.conversations.find(
+        (c) => c.id === current.activeId,
+      );
+      const index =
+        conversation?.messages.findIndex((m) => m.id === messageId) ?? -1;
+      if (!conversation || index < 0) return;
+      const message = conversation.messages[index];
+      setDraft(message.content);
+      setAttachments(message.attachments || []);
+      setEdit({ conversation: conversation.id, index });
+      focusComposer();
+    },
+    [notify],
   );
-  function exportConversation(c: Conversation) {
-    void bridge
-      .exportFile(
-        c.title.replace(/[<>:"/\\|?*]/g, "_") + ".md",
-        `# ${c.title}\n\n` +
-          c.messages
-            .map(
-              (m) =>
-                `## ${m.role === "user" ? "你" : "Lumen"}\n\n${m.content}${m.error ? "\n\n> " + m.error : ""}`,
-            )
-            .join("\n\n---\n\n"),
-      )
-      .catch((error: Error) => notify(error.message));
-  }
-  if (loadError)
-    return (
-      <div className="loading-screen">
-        <Logo />
-        <h2>无法读取本地数据</h2>
-        <p>{loadError}</p>
-        <button className="button primary" onClick={() => void load()}>
-          重试读取
-        </button>
-        <small>请保留用户目录下的 vault.key 与数据文件。</small>
-      </div>
+  const sorted = useMemo(
+    () =>
+      [...state.conversations].sort(
+        (a, b) =>
+          Number(!!b.pinned) - Number(!!a.pinned) || b.updatedAt - a.updatedAt,
+      ),
+    [state.conversations],
+  );
+  const searchResults = useMemo(() => {
+    if (!searchOpen) return [];
+    const query = searchQuery.toLowerCase();
+    if (!query) return sorted;
+    return sorted.filter((c) =>
+      (c.title + " " + c.messages.map((m) => m.content).join(" "))
+        .toLowerCase()
+        .includes(query),
     );
-  if (!ready)
-    return (
-      <div className="loading-screen">
-        <Logo />
-        <Loader2 size={20} className="spin" />
-        <span>为你的想法，留一盏灯。</span>
-      </div>
-    );
-  return (
-    <div
-      className={cx(
-        "app",
-        !sidebar && "sidebar-hidden",
-        settings.compact && "compact",
-      )}
-      onDragEnter={(e) => {
-        if (e.dataTransfer.types.includes("Files")) {
-          e.preventDefault();
-          dragCount.current++;
-          setDragging(true);
-        }
-      }}
-      onDragLeave={(e) => {
-        if (e.dataTransfer.types.includes("Files")) {
-          dragCount.current--;
-          if (dragCount.current <= 0) setDragging(false);
-        }
-      }}
-      onDragOver={(e) => {
-        if (e.dataTransfer.types.includes("Files")) e.preventDefault();
-      }}
-      onDrop={(e) => {
-        if (e.dataTransfer.files.length) {
-          e.preventDefault();
-          dragCount.current = 0;
-          setDragging(false);
-          void addFiles([...e.dataTransfer.files]);
-        }
-      }}
-    >
+  }, [sorted, searchOpen, searchQuery]);
+  const exportConversation = useCallback(
+    (c: Conversation) => {
+      void bridge
+        .exportFile(
+          c.title.replace(/[<>:"/\\|?*]/g, "_") + ".md",
+          `# ${c.title}\n\n` +
+            c.messages
+              .map(
+                (m) =>
+                  `## ${m.role === "user" ? "你" : "Lumen"}\n\n${m.content}${m.error ? "\n\n> " + m.error : ""}`,
+              )
+              .join("\n\n---\n\n"),
+        )
+        .catch((error: Error) => notify(error.message));
+    },
+    [notify],
+  );
+  const sidebarView = useMemo(
+    () => (
       <aside className="sidebar">
         <div className="sidebar-brand">
-          <button onClick={newChat}>
+          <button onClick={newChat} aria-label="Lumen · 新对话" title="新对话">
             <Logo small />
             <strong>
               Lumen<span>流明</span>
@@ -813,12 +821,22 @@ export default function App() {
             <PanelLeftClose size={17} />
           </IconButton>
         </div>
-        <button className="new-chat" onClick={newChat}>
+        <button
+          className="new-chat"
+          onClick={newChat}
+          aria-label="开启新对话"
+          title="开启新对话"
+        >
           <SquarePen size={16} />
           <span>开启新对话</span>
           <kbd>Ctrl ⇧ O</kbd>
         </button>
-        <button className="history-search" onClick={() => setSearchOpen(true)}>
+        <button
+          className="history-search"
+          onClick={() => setSearchOpen(true)}
+          aria-label="搜索对话"
+          title="搜索对话"
+        >
           <Search size={15} />
           <span>搜索对话</span>
           <kbd>Ctrl K</kbd>
@@ -946,7 +964,12 @@ export default function App() {
             </span>
             <ShieldCheck size={13} />
           </div>
-          <button className="settings-entry" onClick={() => openSettings()}>
+          <button
+            className="settings-entry"
+            onClick={() => openSettings()}
+            aria-label="打开设置"
+            title="打开设置"
+          >
             <span className="settings-avatar">
               <Settings2 size={17} />
             </span>
@@ -958,6 +981,73 @@ export default function App() {
           </button>
         </div>
       </aside>
+    ),
+    [
+      newChat,
+      sorted,
+      state.activeId,
+      rename,
+      menu,
+      update,
+      selectConversation,
+      exportConversation,
+      settings.providers,
+      openSettings,
+    ],
+  );
+  if (loadError)
+    return (
+      <div className="loading-screen">
+        <Logo />
+        <h2>无法读取本地数据</h2>
+        <p>{loadError}</p>
+        <button className="button primary" onClick={() => void load()}>
+          重试读取
+        </button>
+        <small>请保留用户目录下的 vault.key 与数据文件。</small>
+      </div>
+    );
+  if (!ready)
+    return (
+      <div className="loading-screen">
+        <Logo />
+        <Loader2 size={20} className="spin" />
+        <span>为你的想法，留一盏灯。</span>
+      </div>
+    );
+  return (
+    <div
+      className={cx(
+        "app",
+        !sidebar && "sidebar-hidden",
+        settings.compact && "compact",
+      )}
+      onDragEnter={(e) => {
+        if (e.dataTransfer.types.includes("Files")) {
+          e.preventDefault();
+          dragCount.current++;
+          setDragging(true);
+        }
+      }}
+      onDragLeave={(e) => {
+        if (e.dataTransfer.types.includes("Files")) {
+          dragCount.current--;
+          if (dragCount.current <= 0) setDragging(false);
+        }
+      }}
+      onDragOver={(e) => {
+        if (e.dataTransfer.types.includes("Files")) e.preventDefault();
+      }}
+      onDrop={(e) => {
+        if (e.dataTransfer.files.length) {
+          e.preventDefault();
+          dragCount.current = 0;
+          setDragging(false);
+          void addFiles([...e.dataTransfer.files]);
+        }
+      }}
+    >
+      {sidebarView}
       <main className={cx("main", !active?.messages.length && "empty-chat")}>
         <header className="topbar">
           <div className="topbar-left">
@@ -1047,20 +1137,8 @@ export default function App() {
                   key={m.id}
                   message={m}
                   streaming={busy && streamId === m.id}
-                  onRetry={() => retry(m.id)}
-                  onEdit={() => {
-                    if (busy) {
-                      notify("请先停止当前生成");
-                      return;
-                    }
-                    setDraft(m.content);
-                    setAttachments(m.attachments || []);
-                    setEdit({
-                      conversation: active.id,
-                      index: active.messages.indexOf(m),
-                    });
-                    focusComposer();
-                  }}
+                  onRetry={retry}
+                  onEdit={editMessage}
                   onImage={setImage}
                   notify={notify}
                 />

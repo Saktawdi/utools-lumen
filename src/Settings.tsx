@@ -129,6 +129,8 @@ export default function Settings({
             {tabs.map((t) => (
               <button
                 key={t.id}
+                aria-label={t.label}
+                title={t.label}
                 className={cx(tab === t.id && "active")}
                 onClick={() => setTab(t.id)}
               >

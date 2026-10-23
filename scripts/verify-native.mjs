@@ -37,6 +37,9 @@ try {
   assert.equal(window.lumenBootError, undefined, window.lumenBootError);
   assert.equal(typeof window.lumen?.load, "function");
   assert.equal(await window.lumen.load(), null);
+  const snapshot = { settings: { providers: [] }, conversations: [] };
+  await window.lumen.save(snapshot);
+  assert.deepEqual(await window.lumen.load(), snapshot);
   assert.ok(
     (await window.lumen.tools()).some((tool) => tool.name === "list_tools"),
   );

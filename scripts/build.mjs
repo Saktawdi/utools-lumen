@@ -18,6 +18,7 @@ await build({
 for (const name of ["plugin.json", "logo.svg", "logo.png"])
   if (fs.existsSync("public/" + name))
     fs.copyFileSync("public/" + name, path.join("dist", name));
+fs.copyFileSync("runtime/storage-worker.cjs", "dist/storage-worker.cjs");
 // uTools loads preload through Node. Isolate it from the source project's ESM scope.
 fs.writeFileSync(
   "dist/package.json",

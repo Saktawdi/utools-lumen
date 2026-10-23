@@ -2,6 +2,7 @@ const fs = require("node:fs");
 const path = require("node:path");
 const os = require("node:os");
 const crypto = require("node:crypto");
+const { Worker } = require("node:worker_threads");
 function dataDirectory() {
   return (
     process.env.LUMEN_DATA_DIR ||
@@ -24,6 +25,9 @@ class LocalStore {
       });
     this.key = fs.readFileSync(keyPath);
     this.pending = Promise.resolve();
+    this.jobs = new Map();
+    this.sequence = 0;
+    this.writer = null;
   }
   encode(value) {
     const iv = crypto.randomBytes(12);
@@ -56,18 +60,58 @@ class LocalStore {
     return this.decode(fs.readFileSync(file));
   }
   write(name, value) {
-    const data = this.encode(value);
-    const file = path.join(this.directory, name + ".enc");
-    const temp = file + ".tmp";
-    this.pending = this.pending
-      .catch(() => {})
-      .then(async () => {
-        await fs.promises.writeFile(temp, data, { mode: 0o600 });
-        if (fs.existsSync(file))
-          await fs.promises.copyFile(file, file + ".bak");
-        await fs.promises.rename(temp, file);
-      });
+    // Clone the snapshot now; stringify, encrypt and atomic writes run off the UI thread.
+    clearTimeout(this.idleTimer);
+    const writer = this.writer || this.createWriter();
+    const id = ++this.sequence;
+    this.pending = new Promise((resolve, reject) => {
+      this.jobs.set(id, { resolve, reject });
+      writer.ref();
+      try {
+        writer.postMessage({ id, name, value });
+      } catch (error) {
+        this.jobs.delete(id);
+        if (!this.jobs.size) writer.unref();
+        reject(error);
+      }
+    });
     return this.pending;
+  }
+  createWriter() {
+    const writer = new Worker(path.join(__dirname, "storage-worker.cjs"), {
+      workerData: { directory: this.directory, key: this.key },
+    });
+    this.writer = writer;
+    const fail = (error) => {
+      if (this.writer !== writer) return;
+      this.writer = null;
+      clearTimeout(this.idleTimer);
+      for (const job of this.jobs.values()) job.reject(error);
+      this.jobs.clear();
+    };
+    writer.on("message", ({ id, error }) => {
+      const job = this.jobs.get(id);
+      if (!job) return;
+      this.jobs.delete(id);
+      if (error) job.reject(new Error(error));
+      else job.resolve();
+      if (!this.jobs.size) {
+        writer.unref();
+        this.idleTimer = setTimeout(() => {
+          if (this.writer === writer && !this.jobs.size) {
+            this.writer = null;
+            void writer.terminate();
+          }
+        }, 15000);
+        this.idleTimer.unref();
+      }
+    });
+    writer.on("error", fail);
+    writer.on("exit", (code) => {
+      fail(new Error(`本地保存线程已退出（${code}）`));
+    });
+    writer.unref();
+    return writer;
   }
 }
 module.exports = { LocalStore, dataDirectory };

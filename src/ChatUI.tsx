@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { memo, useEffect, useMemo, useRef, useState } from "react";
 import type { ReactNode } from "react";
 import { marked } from "marked";
 import DOMPurify from "dompurify";
@@ -99,7 +99,11 @@ export function Welcome({
     </div>
   );
 }
-export function Markdown({ content }: { content: string }) {
+export const Markdown = memo(function Markdown({
+  content,
+}: {
+  content: string;
+}) {
   const ref = useRef<HTMLDivElement>(null);
   const html = useMemo(
     () =>
@@ -155,8 +159,8 @@ export function Markdown({ content }: { content: string }) {
       }}
     />
   );
-}
-export function MessageView({
+});
+export const MessageView = memo(function MessageView({
   message: m,
   streaming,
   onRetry,
@@ -166,8 +170,8 @@ export function MessageView({
 }: {
   message: Message;
   streaming: boolean;
-  onRetry: () => void;
-  onEdit: () => void;
+  onRetry: (messageId: string) => void;
+  onEdit: (messageId: string) => void;
   onImage: (attachment: Attachment) => void;
   notify: (t: string) => void;
 }) {
@@ -302,11 +306,11 @@ export function MessageView({
               {copied ? <Check size={13} /> : <Copy size={13} />}
             </IconButton>
             {m.role === "assistant" ? (
-              <IconButton label="重新生成" onClick={onRetry}>
+              <IconButton label="重新生成" onClick={() => onRetry(m.id)}>
                 <RotateCcw size={13} />
               </IconButton>
             ) : (
-              <IconButton label="编辑并重发" onClick={onEdit}>
+              <IconButton label="编辑并重发" onClick={() => onEdit(m.id)}>
                 <Pencil size={13} />
               </IconButton>
             )}
@@ -321,7 +325,7 @@ export function MessageView({
       </div>
     </article>
   );
-}
+});
 function prettyJson(raw: string) {
   try {
     return JSON.stringify(JSON.parse(raw), null, 2);
@@ -502,6 +506,7 @@ export function Composer({
   );
   const [custom, setCustom] = useState("");
   useEffect(() => {
+    if (CSS.supports("field-sizing", "content")) return;
     const el = textarea.current;
     if (el) {
       el.style.height = "0px";
