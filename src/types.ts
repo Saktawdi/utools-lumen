@@ -119,7 +119,6 @@ export type Settings = {
   sendKey: "enter" | "ctrl-enter";
   compact: boolean;
   reduceMotion: boolean;
-  migration?: { count: number; at: number; source: string };
 };
 export type AppState = {
   settings: Settings;

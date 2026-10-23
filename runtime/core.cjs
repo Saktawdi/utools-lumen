@@ -60,22 +60,7 @@ class Core {
     this.catalogPromise = null;
   }
   load() {
-    const state = this.store.read("state", null);
-    const migration = this.store.read("migration", null);
-    if (state) return state;
-    return migration
-      ? {
-          settings: {
-            providers: migration.providers,
-            migration: {
-              count: migration.providers.length,
-              at: migration.at,
-              source: "ChatGPT.好友",
-            },
-          },
-          conversations: [],
-        }
-      : null;
+    return this.store.read("state", null);
   }
   async save(state) {
     if (
