@@ -430,7 +430,6 @@ function ModelManager({
   busy: string;
 }) {
   const [query, setQuery] = useState("");
-  const [manual, setManual] = useState("");
   const [editing, setEditing] = useState("");
   const [visible, setVisible] = useState(120);
   const [marquee, setMarquee] = useState(false);
@@ -591,51 +590,6 @@ function ModelManager({
           </button>
         </div>
       </div>
-      <div className="manual-model">
-        <div className="suggestion-input">
-          <input
-            aria-label="输入模型 ID"
-            placeholder="输入模型 ID，支持联想补全…"
-            value={manual}
-            onChange={(e) => setManual(e.target.value)}
-            onKeyDown={(e) => {
-              if (e.key === "Enter" && manual.trim()) {
-                e.preventDefault();
-                const id = manual.trim();
-                onChange({ models: [...new Set([...p.models, id])] });
-                setManual("");
-              }
-            }}
-          />
-          {manual && (
-            <div className="suggestions">
-              {all
-                .filter(
-                  (id) =>
-                    id.toLowerCase().includes(manual.toLowerCase()) &&
-                    !p.models.includes(id),
-                )
-                .slice(0, 8)
-                .map((id) => (
-                  <button key={id} onClick={() => setManual(id)}>
-                    {id}
-                  </button>
-                ))}
-            </div>
-          )}
-        </div>
-        <button
-          className="button"
-          aria-label="添加启动模型"
-          disabled={!manual.trim()}
-          onClick={() => {
-            onChange({ models: [...new Set([...p.models, manual.trim()])] });
-            setManual("");
-          }}
-        >
-          <Plus size={16} />
-        </button>
-      </div>
       {p.models.length > 0 && (
         <div className="selected-models">
           {p.models.map((id) => (
@@ -770,9 +724,7 @@ function ModelManager({
               </div>
             ))}
             {!filtered.length && (
-              <p className="empty-inline">
-                没有匹配的模型，可直接输入 ID 添加。
-              </p>
+              <p className="empty-inline">没有匹配的模型。</p>
             )}
             {rect && <div className="selection-marquee" style={rect} />}
           </div>

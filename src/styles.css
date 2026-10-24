@@ -2210,51 +2210,6 @@ kbd {
   margin-left: 5px;
   vertical-align: middle;
 }
-.manual-model {
-  display: flex;
-  gap: 7px;
-  margin-top: 17px;
-  align-items: stretch;
-}
-.manual-model > .button {
-  width: 35px;
-  padding: 0;
-}
-.suggestion-input {
-  flex: 1;
-  min-width: 0;
-  position: relative;
-}
-.suggestions {
-  position: absolute;
-  top: 40px;
-  left: 0;
-  right: 0;
-  border: 1px solid var(--border);
-  box-shadow: var(--shadow);
-  background: var(--surface);
-  border-radius: 8px;
-  z-index: 5;
-  max-height: 220px;
-  overflow: auto;
-}
-.suggestions:empty {
-  display: none;
-}
-.suggestions > button {
-  display: block;
-  width: 100%;
-  padding: 8px 10px;
-  font-size: 11px;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  text-align: left;
-}
-.suggestions > button:hover {
-  background: var(--surface-2);
-  color: var(--accent);
-}
 .selected-models {
   display: flex;
   gap: 5px;
