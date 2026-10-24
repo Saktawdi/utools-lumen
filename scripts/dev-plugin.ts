@@ -189,6 +189,9 @@ export function lumenBridge(): Plugin {
             case "setToolPermission":
               core.setToolPermission(args.mode);
               break;
+            case "conversationResult":
+              core.conversationResult(args.id, args.result, args.error);
+              break;
             default:
               res.statusCode = 404;
               throw new Error("未知操作");

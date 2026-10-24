@@ -131,6 +131,95 @@ function builtins() {
     execute: (_, { settings }) => registry.list(settings),
   });
   register({
+    name: "get_current_conversation",
+    title: "当前会话信息",
+    description:
+      "获取发起本次请求的当前会话 ID、名称、分组与标记颜色，不读取其他会话内容。",
+    group: "会话管理",
+    inputSchema: schema({}),
+    execute: (_, context) => context.conversation({ type: "current" }),
+  });
+  register({
+    name: "list_conversation_groups",
+    title: "列出会话分组",
+    description:
+      "列出可用分组的 ID、名称、颜色和会话数量，移入分组前可先查询。",
+    group: "会话管理",
+    inputSchema: schema({}),
+    execute: (_, context) => context.conversation({ type: "groups" }),
+  });
+  register({
+    name: "create_conversation_group",
+    title: "创建会话分组",
+    description:
+      "创建会话分组，返回分组 ID；已有同名分组时请使用其 ID。创建后可调用 move_conversation 移入当前会话。",
+    group: "会话管理",
+    approval: true,
+    inputSchema: {
+      ...schema({
+        name: { type: "string", description: "1–24 字的分组名称" },
+        color: { type: "string", description: "可选的 #RRGGBB 颜色，默认绿色" },
+      }),
+      required: ["name"],
+    },
+    execute: ({ name, color }, context) =>
+      context.conversation({
+        type: "group-create",
+        group: {
+          id: require("node:crypto").randomUUID(),
+          name,
+          color: color || "#4d9d80",
+        },
+      }),
+  });
+  const conversationId = {
+    type: "string",
+    description:
+      "可省略；若填写，仅接受 get_current_conversation 返回的当前会话 ID",
+  };
+  register({
+    name: "move_conversation",
+    title: "移动当前会话",
+    description:
+      "将当前会话移入指定分组。groupId 使用 list_conversation_groups 的 ID；空字符串表示移回未分组。",
+    group: "会话管理",
+    approval: true,
+    inputSchema: {
+      ...schema({ conversationId, groupId: { type: "string" } }),
+      required: ["groupId"],
+    },
+    execute: ({ conversationId: id, groupId }, context) =>
+      context.conversation({ type: "move", id, groupId: groupId || undefined }),
+  });
+  register({
+    name: "set_conversation_color",
+    title: "标记当前会话颜色",
+    description:
+      "设置当前会话的颜色标记，使用 #RRGGBB 格式；空字符串表示清除颜色标记。",
+    group: "会话管理",
+    approval: true,
+    inputSchema: {
+      ...schema({ conversationId, color: { type: "string" } }),
+      required: ["color"],
+    },
+    execute: ({ conversationId: id, color }, context) =>
+      context.conversation({ type: "color", id, color: color || undefined }),
+  });
+  register({
+    name: "rename_conversation",
+    title: "重命名当前会话",
+    description:
+      "根据用户要求重命名当前会话，保留消息和已有分组。名称需要 1–100 字。",
+    group: "会话管理",
+    approval: true,
+    inputSchema: {
+      ...schema({ conversationId, title: { type: "string" } }),
+      required: ["title"],
+    },
+    execute: ({ conversationId: id, title }, context) =>
+      context.conversation({ type: "rename", id, title }),
+  });
+  register({
     name: "generate_image",
     title: "生成图片",
     description:

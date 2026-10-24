@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import http from "node:http";
 import { pathToFileURL } from "node:url";
 import { createRequire } from "node:module";
 
@@ -63,6 +64,11 @@ try {
       toolPermission: "always_allow",
     },
     conversations: [],
+    conversationGroups: [
+      { id: "native-group", name: "Native", color: "#638ed5", collapsed: true },
+    ],
+    conversationOrder: [],
+    ungroupedCollapsed: true,
   };
   await window.lumen.save(snapshot);
   assert.deepEqual(await window.lumen.load(), snapshot);
@@ -80,6 +86,111 @@ try {
   assert.ok(
     (await window.lumen.tools()).some((tool) => tool.name === "list_tools"),
   );
+  const nativeTools = await window.lumen.tools();
+  for (const name of [
+    "get_current_conversation",
+    "list_conversation_groups",
+    "create_conversation_group",
+    "move_conversation",
+    "set_conversation_color",
+    "rename_conversation",
+  ])
+    assert.ok(
+      nativeTools.some((tool) => tool.name === name),
+      name,
+    );
+  assert.equal(typeof window.lumen.conversationResult, "function");
+  await window.lumen.conversationResult("expired-request", { success: true });
+  const conversationCalls = [
+    ["get_current_conversation", {}],
+    ["list_conversation_groups", {}],
+    ["create_conversation_group", { name: "Native tools" }],
+    ["move_conversation", { groupId: "native-group" }],
+    ["set_conversation_color", { color: "#638ed5" }],
+    ["rename_conversation", { title: "Native renamed" }],
+  ];
+  const conversationRequests = [],
+    commands = [],
+    toolEvents = [];
+  const nativeModel = http.createServer(async (req, res) => {
+    let body = "";
+    for await (const chunk of req) body += chunk;
+    conversationRequests.push(JSON.parse(body));
+    res.setHeader("Content-Type", "application/json");
+    res.end(
+      JSON.stringify({
+        choices: [
+          {
+            message:
+              conversationRequests.length === 1
+                ? {
+                    tool_calls: conversationCalls.map(
+                      ([name, args], index) => ({
+                        id: "native-" + index,
+                        type: "function",
+                        function: { name, arguments: JSON.stringify(args) },
+                      }),
+                    ),
+                  }
+                : { content: "Native conversation tools completed" },
+          },
+        ],
+      }),
+    );
+  });
+  await new Promise((resolve) => nativeModel.listen(0, "127.0.0.1", resolve));
+  try {
+    await window.lumen.chat(
+      {
+        provider: {
+          id: "native",
+          name: "Native",
+          protocol: "openai",
+          baseURL: `http://127.0.0.1:${nativeModel.address().port}/v1`,
+          keys: [],
+        },
+        model: "native",
+        config: {},
+        effort: "auto",
+        messages: [],
+        conversationId: "native-conversation",
+        settings: {
+          systemPrompt: "",
+          customTools: [],
+          disabledTools: [],
+          search: { enabled: false },
+          toolPermission: "always_allow",
+        },
+      },
+      (event) => {
+        if (event.type === "conversation-action") {
+          commands.push(event.command);
+          // Echoing commands tests the actual bundled request/ack boundary;
+          // renderer mutation and persistence are exercised in conversations.test.cjs.
+          void window.lumen.conversationResult(event.id, event.command);
+        }
+        if (event.type === "tool-result") toolEvents.push(event.call);
+      },
+    );
+    assert.deepEqual(
+      commands.map((command) => command.type),
+      ["current", "groups", "group-create", "move", "color", "rename"],
+    );
+    assert.equal(commands[0].id, "native-conversation");
+    assert.equal(commands[3].id, "native-conversation");
+    assert.equal(commands[2].group.name, "Native tools");
+    assert.equal(toolEvents.length, 6);
+    assert.ok(toolEvents.every((call) => call.status === "done"));
+    assert.equal(
+      conversationRequests[1].messages.filter(
+        (message) => message.role === "tool",
+      ).length,
+      6,
+    );
+  } finally {
+    nativeModel.closeAllConnections();
+    await new Promise((resolve) => nativeModel.close(resolve));
+  }
   onEntry({ code: "translate", type: "over", payload: "Hello" });
   let received;
   window.lumen.onEnter((entry) => {
@@ -119,14 +230,14 @@ try {
     fs.readFileSync(path.join(directory, `Lumen-${imageId}.png`)),
     Buffer.from(imageData, "base64"),
   );
-  assert.deepEqual((await window.lumen.usage()).records, []);
+  assert.equal((await window.lumen.usage()).records.length, 2);
   await window.lumen.exportFile("usage.csv", "input,output\n1,2");
   assert.equal(
     fs.readFileSync(path.join(directory, "usage.csv"), "utf8"),
     "input,output\n1,2",
   );
   console.log(
-    `preload 检查通过（${noWorkers ? "Worker 不可用" : "Worker 可用"}）：存储、权限、工具、快捷指令、截图、生图资产/缩略图、图片保存/复制、用量与 CSV`,
+    `preload 检查通过（${noWorkers ? "Worker 不可用" : "Worker 可用"}）：存储、权限、六个会话工具与回执、快捷指令、截图、生图资产/缩略图、图片保存/复制、用量与 CSV`,
   );
 } finally {
   fs.rmSync(directory, { recursive: true, force: true });

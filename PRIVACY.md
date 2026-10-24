@@ -37,6 +37,10 @@ and cached locally. This request does not include prompts or API keys.
 - Tool calls, search queries, and visited page URLs are sent to the services
   configured for those tools. HTTP tools send their configured request headers
   and body to their target.
+- Conversation tools return the current conversation ID, title, group and color,
+  or group names, IDs, colors and counts to the selected model provider as tool
+  results. They do not return other conversations' messages or credentials.
+  Changes to groups, titles and colors follow the tool permission setting.
 - The built-in screenshot command copies the captured image to the local
   clipboard; the image is sent to a model only when the plugin submits it.
 - Image generation sends the description, selected model parameters, and any

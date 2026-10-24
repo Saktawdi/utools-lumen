@@ -14,26 +14,30 @@ import {
   ChevronDown,
   ChevronRight,
   Command,
-  Ellipsis,
+  FolderOpen,
   Loader2,
   MessageSquare,
   Moon,
   PanelLeftClose,
   PanelLeftOpen,
-  Pin,
   Plus,
   Search,
   Settings2,
   ShieldCheck,
   SquarePen,
   Sun,
-  Trash2,
   X,
   WandSparkles,
 } from "lucide-react";
 import { bridge, mergeState } from "./bridge";
 import { skinVariables } from "./appearance-utils";
 import { agentSettings } from "./state-data";
+import ConversationList from "./ConversationList";
+import {
+  applyConversationAction,
+  conversationCommand,
+  orderedConversations,
+} from "./conversation-data";
 import { freshState } from "./defaults";
 import Settings from "./Settings";
 import { languageName, quickRequest } from "./quick-commands";
@@ -43,6 +47,7 @@ import type {
   AppState,
   Attachment,
   Conversation,
+  ConversationAction,
   Message,
   ModelEntry,
   PluginEntry,
@@ -129,15 +134,13 @@ export default function App() {
   const [image, setImage] = useState<Attachment>();
   const [dragging, setDragging] = useState(false);
   const dragCount = useRef(0);
-  const [menu, setMenu] = useState("");
-  const [rename, setRename] = useState("");
-  const [deleteId, setDeleteId] = useState("");
+  const [draftGroupId, setDraftGroupId] = useState<string>();
   const [edit, setEdit] = useState<{ conversation: string; index: number }>();
   const [atBottom, setAtBottom] = useState(true);
   const scroll = useRef<HTMLDivElement>(null);
   const tail = useRef<HTMLDivElement>(null);
   const dirty = useRef(false);
-  const saving = useRef<Promise<void> | undefined>(undefined);
+  const saving = useRef<Promise<boolean> | undefined>(undefined);
   const loading = useRef(false);
   const sending = useRef(false);
   const settings = state.settings;
@@ -221,28 +224,44 @@ export default function App() {
     },
     [],
   );
-  const persist = useCallback(async function persistState(): Promise<void> {
+  const persist = useCallback(async function persistState(): Promise<boolean> {
     if (saving.current) {
-      await saving.current;
-      if (dirty.current) await persistState();
-      return;
+      const saved = await saving.current;
+      if (!saved) return false;
+      if (dirty.current) return persistState();
+      return true;
     }
-    if (!dirty.current) return;
+    if (!dirty.current) return true;
     dirty.current = false;
     const snapshot = stateRef.current;
     saving.current = (async () => {
       try {
         await bridge.save(snapshot);
         setSaveError("");
+        return true;
       } catch (e) {
         dirty.current = true;
         setSaveError((e as Error).message);
+        return false;
       } finally {
         saving.current = undefined;
       }
     })();
-    await saving.current;
+    return saving.current;
   }, []);
+  const organizeConversation = useCallback(
+    (action: ConversationAction) => {
+      try {
+        update((current) => applyConversationAction(current, action));
+        void persist();
+        return true;
+      } catch (error) {
+        notify((error as Error).message);
+        return false;
+      }
+    },
+    [update, persist, notify],
+  );
   const closeSettings = useCallback(() => {
     setSettingsOpen(false);
     void persist();
@@ -338,27 +357,51 @@ export default function App() {
   }, [settings.theme, activeSkin, settings.reduceMotion]);
   const focusComposer = () =>
     setTimeout(() => window.dispatchEvent(new Event("lumen-focus")), 30);
-  const newChat = useCallback(() => {
-    setView("chat");
-    update((s) => ({ ...s, activeId: undefined }));
-    setDraft("");
-    setAttachments([]);
-    setEdit(undefined);
-    setEffort("auto");
-    setQuickAction(undefined);
-    setModelKey(
-      stateRef.current.settings.defaultModel ||
-        providerEntries(stateRef.current.settings.providers)[0]?.key ||
-        "",
-    );
-    setModelOpen(false);
-    setToolsOpen(false);
-    focusComposer();
-  }, [update]);
+  const newChat = useCallback(
+    (groupId?: string) => {
+      setView("chat");
+      setDraftGroupId(groupId);
+      update((s) => ({
+        ...(groupId && s.conversationGroups.some((g) => g.id === groupId)
+          ? applyConversationAction(s, {
+              type: "group-collapse",
+              id: groupId,
+              collapsed: false,
+            })
+          : s),
+        activeId: undefined,
+      }));
+      setDraft("");
+      setAttachments([]);
+      setEdit(undefined);
+      setEffort("auto");
+      setQuickAction(undefined);
+      setModelKey(
+        stateRef.current.settings.defaultModel ||
+          providerEntries(stateRef.current.settings.providers)[0]?.key ||
+          "",
+      );
+      setModelOpen(false);
+      setToolsOpen(false);
+      focusComposer();
+    },
+    [update],
+  );
   const selectConversation = useCallback(
     (c: Conversation) => {
       setView("chat");
-      update((s) => ({ ...s, activeId: c.id }));
+      setDraftGroupId(undefined);
+      update((s) => ({
+        ...s,
+        activeId: c.id,
+        conversations: s.conversations.map((item) =>
+          item.id === c.id && item.unread ? { ...item, unread: false } : item,
+        ),
+        conversationGroups: s.conversationGroups.map((g) =>
+          g.id === c.groupId && g.collapsed ? { ...g, collapsed: false } : g,
+        ),
+        ungroupedCollapsed: c.groupId ? s.ungroupedCollapsed : false,
+      }));
       setEffort(c.effort || "auto");
       if (c.modelKey) setModelKey(c.modelKey);
       setDraft("");
@@ -366,7 +409,6 @@ export default function App() {
       setEdit(undefined);
       setQuickAction(undefined);
       setSearchOpen(false);
-      setMenu("");
       setAtBottom(true);
     },
     [update],
@@ -378,7 +420,6 @@ export default function App() {
           setImage(undefined);
           setModelOpen(false);
           setToolsOpen(false);
-          setMenu("");
         }
         return;
       }
@@ -608,6 +649,8 @@ export default function App() {
     setStreamConversation(cid);
     const nextConversation = {
       ...conversation,
+      archived: false,
+      unread: false,
       messages: [...messages, reply],
       modelKey: target.key,
       effort: requestEffort,
@@ -664,9 +707,36 @@ export default function App() {
           effort: requestEffort,
           messages,
           settings: agentSettings(stateRef.current.settings),
+          conversationId: cid,
         },
         (event) => {
           switch (event.type) {
+            case "conversation-action":
+              if (event.id && event.command) {
+                const requestId = event.id;
+                const command = event.command;
+                void (async () => {
+                  try {
+                    const current = stateRef.current;
+                    const applied = conversationCommand(current, command);
+                    if (applied.state !== current) {
+                      update(applied.state);
+                      if (!(await persist()))
+                        throw new Error(
+                          "会话已更新，但保存失败；请查看界面中的保存提示",
+                        );
+                    }
+                    await bridge.conversationResult(requestId, applied.result);
+                  } catch (error) {
+                    await bridge.conversationResult(
+                      requestId,
+                      undefined,
+                      (error as Error).message,
+                    );
+                  }
+                })().catch((error) => notify((error as Error).message));
+              }
+              break;
             case "text":
               output.content += event.text || "";
               if (event.text) {
@@ -775,7 +845,12 @@ export default function App() {
       attachments: [...attachments],
       createdAt: Date.now(),
     };
-    const conversation = active || makeConversation();
+    const conversation = active || {
+      ...makeConversation(),
+      groupId: state.conversationGroups.some((g) => g.id === draftGroupId)
+        ? draftGroupId
+        : undefined,
+    };
     const messages =
       edit?.conversation === conversation.id
         ? conversation.messages.slice(0, edit.index)
@@ -965,12 +1040,8 @@ export default function App() {
     [notify],
   );
   const sorted = useMemo(
-    () =>
-      [...state.conversations].sort(
-        (a, b) =>
-          Number(!!b.pinned) - Number(!!a.pinned) || b.updatedAt - a.updatedAt,
-      ),
-    [state.conversations],
+    () => orderedConversations(state),
+    [state.conversations, state.conversationOrder],
   );
   const searchResults = useMemo(() => {
     if (!searchOpen) return [];
@@ -999,11 +1070,33 @@ export default function App() {
     },
     [notify],
   );
+  const selectConversationId = useCallback(
+    (id: string) => {
+      const conversation = stateRef.current.conversations.find(
+        (c) => c.id === id,
+      );
+      if (conversation) selectConversation(conversation);
+    },
+    [selectConversation],
+  );
+  const exportConversationId = useCallback(
+    (id: string) => {
+      const conversation = stateRef.current.conversations.find(
+        (c) => c.id === id,
+      );
+      if (conversation) exportConversation(conversation);
+    },
+    [exportConversation],
+  );
   const sidebarView = useMemo(
     () => (
       <aside className="sidebar">
         <div className="sidebar-brand">
-          <button onClick={newChat} aria-label="Lumen · 新对话" title="新对话">
+          <button
+            onClick={() => newChat()}
+            aria-label="Lumen · 新对话"
+            title="新对话"
+          >
             <Logo small />
             <strong>
               Lumen<span>流明</span>
@@ -1015,7 +1108,7 @@ export default function App() {
         </div>
         <button
           className="new-chat"
-          onClick={newChat}
+          onClick={() => newChat()}
           aria-label="开启新对话"
           title="开启新对话"
         >
@@ -1050,119 +1143,19 @@ export default function App() {
           <span>生图工作室</span>
           <span className="sidebar-beta">BETA</span>
         </button>
-        <div className="history-heading">
-          <span>你的对话</span>
-          <span>
-            {state.conversations.length
-              ? String(state.conversations.length).padStart(2, "0")
-              : ""}
-          </span>
-        </div>
-        <div className="history-list">
-          {!sorted.length && (
-            <div className="history-empty">
-              <MessageSquare size={21} />
-              <p>
-                每一次好奇，
-                <br />
-                都值得被记住。
-              </p>
-            </div>
-          )}
-          {sorted.map((c) => (
-            <div
-              className={cx(
-                "history-item",
-                view === "chat" && c.id === state.activeId && "active",
-              )}
-              key={c.id}
-            >
-              {rename === c.id ? (
-                <input
-                  autoFocus
-                  defaultValue={c.title}
-                  aria-label="对话名称"
-                  onBlur={(e) => {
-                    const title = e.target.value.trim();
-                    if (title)
-                      update((s) => ({
-                        ...s,
-                        conversations: s.conversations.map((x) =>
-                          x.id === c.id ? { ...x, title } : x,
-                        ),
-                      }));
-                    setRename("");
-                  }}
-                  onKeyDown={(e) => {
-                    if (e.key === "Enter") e.currentTarget.blur();
-                    if (e.key === "Escape") setRename("");
-                  }}
-                />
-              ) : (
-                <button
-                  className="history-title"
-                  onClick={() => selectConversation(c)}
-                  onDoubleClick={() => setRename(c.id)}
-                >
-                  {c.pinned ? <Pin size={12} /> : <MessageSquare size={13} />}
-                  <span>{c.title}</span>
-                </button>
-              )}
-              <IconButton
-                label={`对话操作 ${c.title}`}
-                onClick={() => setMenu(menu === c.id ? "" : c.id)}
-              >
-                <Ellipsis size={15} />
-              </IconButton>
-              {menu === c.id && (
-                <div className="popover history-menu">
-                  <button
-                    onClick={() => {
-                      setRename(c.id);
-                      setMenu("");
-                    }}
-                  >
-                    <SquarePen size={13} />
-                    重命名
-                  </button>
-                  <button
-                    onClick={() => {
-                      update((s) => ({
-                        ...s,
-                        conversations: s.conversations.map((x) =>
-                          x.id === c.id ? { ...x, pinned: !x.pinned } : x,
-                        ),
-                      }));
-                      setMenu("");
-                    }}
-                  >
-                    <Pin size={13} />
-                    {c.pinned ? "取消置顶" : "置顶对话"}
-                  </button>
-                  <button
-                    onClick={() => {
-                      exportConversation(c);
-                      setMenu("");
-                    }}
-                  >
-                    <ArrowDownToLine size={13} />
-                    导出 Markdown
-                  </button>
-                  <button
-                    className="danger-text"
-                    onClick={() => {
-                      setDeleteId(c.id);
-                      setMenu("");
-                    }}
-                  >
-                    <Trash2 size={13} />
-                    删除对话
-                  </button>
-                </div>
-              )}
-            </div>
-          ))}
-        </div>
+        <ConversationList
+          conversations={sorted}
+          groups={state.conversationGroups}
+          ungroupedCollapsed={state.ungroupedCollapsed}
+          activeId={view === "chat" ? state.activeId : undefined}
+          runningId={streamConversation || undefined}
+          waiting={!!approval}
+          onSelect={selectConversationId}
+          onNew={newChat}
+          onAction={organizeConversation}
+          onExport={exportConversationId}
+          notify={notify}
+        />
         <div className="sidebar-bottom">
           <div className="workspace-status">
             <span className="status-dot online" />
@@ -1195,11 +1188,15 @@ export default function App() {
       newChat,
       sorted,
       state.activeId,
-      rename,
-      menu,
       update,
-      selectConversation,
-      exportConversation,
+      selectConversationId,
+      exportConversationId,
+      organizeConversation,
+      state.conversationGroups,
+      state.ungroupedCollapsed,
+      streamConversation,
+      approval,
+      notify,
       settings.providers,
       openSettings,
       view,
@@ -1429,6 +1426,35 @@ export default function App() {
           </button>
         )}
         <Composer
+          leading={
+            !active &&
+            !quickAction &&
+            draftGroupId &&
+            state.conversationGroups.some((g) => g.id === draftGroupId) ? (
+              <div className="draft-group-label">
+                <FolderOpen
+                  size={13}
+                  style={{
+                    color: state.conversationGroups.find(
+                      (g) => g.id === draftGroupId,
+                    )?.color,
+                  }}
+                />
+                <span>
+                  {
+                    state.conversationGroups.find((g) => g.id === draftGroupId)
+                      ?.name
+                  }
+                </span>
+                <IconButton
+                  label="取消新对话归组"
+                  onClick={() => setDraftGroupId(undefined)}
+                >
+                  <X size={12} />
+                </IconButton>
+              </div>
+            ) : undefined
+          }
           quickLabel={
             quickAction
               ? quickAction === "ask"
@@ -1581,35 +1607,6 @@ export default function App() {
           <img src={image.data} alt={image.name} />
           <span>{image.name}</span>
         </div>
-      )}
-      {deleteId && (
-        <Modal title="删除对话" onClose={() => setDeleteId("")}>
-          <div className="confirm-box">
-            <Trash2 size={25} />
-            <h3>删除这段对话？</h3>
-            <p>删除后无法在界面中恢复。</p>
-            <div className="row gap">
-              <button className="button" onClick={() => setDeleteId("")}>
-                取消
-              </button>
-              <button
-                className="button danger"
-                onClick={() => {
-                  update((s) => ({
-                    ...s,
-                    conversations: s.conversations.filter(
-                      (c) => c.id !== deleteId,
-                    ),
-                    activeId: s.activeId === deleteId ? undefined : s.activeId,
-                  }));
-                  setDeleteId("");
-                }}
-              >
-                删除对话
-              </button>
-            </div>
-          </div>
-        </Modal>
       )}
       {dragging && (
         <div className="drop-overlay">

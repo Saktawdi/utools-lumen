@@ -39,6 +39,8 @@ window.lumen = {
   stop: () => core.stop(),
   approve: (id, allow) => core.approve(id, allow),
   setToolPermission: async (mode) => core.setToolPermission(mode),
+  conversationResult: async (id, result, error) =>
+    core.conversationResult(id, result, error),
   searchTest: (config, query) => core.searchTest(config, query),
   registerTool: (tool) => {
     const remove = core.registerTool(tool);

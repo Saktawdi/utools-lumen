@@ -71,4 +71,6 @@ export const freshState = (): AppState => ({
     chatLayout: "split",
   },
   conversations: [],
+  conversationGroups: [],
+  conversationOrder: [],
 });

@@ -102,6 +102,8 @@ const preview: Bridge = {
     void api("approve", { id, allow });
   },
   setToolPermission: (mode) => api("setToolPermission", { mode }),
+  conversationResult: (id, result, error) =>
+    api("conversationResult", { id, result, error }),
   exportFile: async (name, content) => {
     const { id } = await api<{ id: string }>("exportFile", { name, content });
     const a = document.createElement("a");

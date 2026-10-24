@@ -4,22 +4,23 @@
 
 Lumen 是一个轻量的 BYOK AI 工作空间：连接自己的供应商和模型，粘贴图片开始对话，让 Agent 搜索、计算或生成图片，再把作品留在本地画廊。安装后的插件即开即用，无需常驻开发服务。
 
-**0.2.4 Beta** · uTools 插件市场审核中 · [版本与下载](https://github.com/Saktawdi/utools-lumen/releases) · [问题反馈](https://github.com/Saktawdi/utools-lumen/issues) · [MIT License](LICENSE)
+**0.2.5 Beta** · uTools 插件市场审核中 · [版本与下载](https://github.com/Saktawdi/utools-lumen/releases) · [问题反馈](https://github.com/Saktawdi/utools-lumen/issues) · [MIT License](LICENSE)
 
 ![自定义背景下的多模型聊天，Agent 调用生图工具并展示结果](assets/screenshots/agent-chat.png)
 
 ## 功能一览
 
-| 功能            | 可以做什么                                                                         |
-| --------------- | ---------------------------------------------------------------------------------- |
-| 多模型 BYOK     | 自定义供应商、API 地址和密钥；拉取、筛选、复选或框选启动模型，在聊天中自由切换。   |
-| 图片与附件      | 粘贴、拖放、选图或截图提问；添加文本与代码文件，交给 Agent 读取。                  |
-| Agent 工具      | 搜索网页、读取内容、计算、查时间、发现附件；按需扩展本地或 HTTP 工具。             |
-| 生图工作室      | 独立配置生图供应商，文字生图、参考图改图；Agent 也能调用 `generate_image`。        |
-| 本地画廊        | 集中查看工作室和 Agent 的作品，支持搜索、收藏、复制、下载和继续改图。              |
-| Token 统计      | 会话上下文占用与输出速率；偏好设置中查看活动热力图、用量趋势、模型分布和请求明细。 |
-| 外观定制        | 浅色、深色、跟随系统；本地背景、高斯模糊、自定义头像、气泡样式和紧凑布局。         |
-| uTools 快捷指令 | 选中文字翻译、截图翻译、选中文字问答，使用你设置的默认 Agent。                     |
+| 功能            | 可以做什么                                                                            |
+| --------------- | ------------------------------------------------------------------------------------- |
+| 多模型 BYOK     | 自定义供应商、API 地址和密钥；拉取、筛选、复选或框选启动模型，在聊天中自由切换。      |
+| 图片与附件      | 粘贴、拖放、选图或截图提问；添加文本与代码文件，交给 Agent 读取。                     |
+| Agent 工具      | 搜索网页、读取内容、计算、查时间、发现附件；按需扩展本地或 HTTP 工具。                |
+| 会话管理        | 彩色分组、收展、拖拽排序、组内新建；会话颜色、未读和归档；也可让 Agent 整理当前会话。 |
+| 生图工作室      | 独立配置生图供应商，文字生图、参考图改图；Agent 也能调用 `generate_image`。           |
+| 本地画廊        | 集中查看工作室和 Agent 的作品，支持搜索、收藏、复制、下载和继续改图。                 |
+| Token 统计      | 会话上下文占用与输出速率；偏好设置中查看活动热力图、用量趋势、模型分布和请求明细。    |
+| 外观定制        | 浅色、深色、跟随系统；本地背景、高斯模糊、自定义头像、气泡样式和紧凑布局。            |
+| uTools 快捷指令 | 选中文字翻译、截图翻译、选中文字问答，使用你设置的默认 Agent。                        |
 
 ## 快速开始
 
@@ -43,6 +44,29 @@ Agent 通过 `list_tools` 发现已注册能力，内置时间、计算、网页
 网页搜索支持 **AnySearch 官方 MCP、Tavily、SearXNG 和自定义 JSON 搜索**，配置页可直接测试。聊天供应商、生图供应商及搜索服务均支持批量导入多个密钥、去重、轮询与失败切换。
 
 日常对话支持流式回复、思考过程与工具状态展示、停止、重试、编辑重发、历史搜索、置顶、重命名及 Markdown 导出。
+
+## 会话分组与标记
+
+![彩色分组与 Agent 整理当前会话，本地验证样例](assets/screenshots/conversation-groups.jpg)
+
+侧栏「你的对话」旁可新建彩色分组。分组支持编辑、收展、全部收展和拖动排序，点击组头的 `+` 可在组内开始新对话。发送首条消息后才建立会话，输入框上方会显示待归入的分组；切换到其他会话会取消这次归组草稿。
+
+拖动会话到分组头即可归组，拖到「未分组」可移出；组内拖动可调整顺序。置顶区与普通区分别排序，同组跨区拖动会切换置顶状态，跨组拖动保留原置顶状态。也可聚焦会话或组头，按 `Alt+↑ / ↓` 排序。
+
+右键或点击行尾菜单，可重命名、归组、标记颜色、置顶、标记未读、复制会话 ID、归档或导出 Markdown。颜色提供八种预设和自定义色。归档对话可在「归档」列表恢复，继续发送消息也会恢复；删除分组只将组内对话移回未分组。分组、标记、排序和收展状态保存在本机，并包含在配置与会话备份中。
+
+Agent 可通过 `list_tools` 发现以下会话管理工具：
+
+| 工具                        | 用途                                          |
+| --------------------------- | --------------------------------------------- |
+| `get_current_conversation`  | 读取发起本次请求的会话 ID、标题、分组与颜色。 |
+| `list_conversation_groups`  | 列出分组 ID、名称、颜色和会话数量。           |
+| `create_conversation_group` | 新建分组并返回其 ID。                         |
+| `move_conversation`         | 将当前会话移入指定分组，或移回未分组。        |
+| `set_conversation_color`    | 设置或清除当前会话的 `#RRGGBB` 颜色。         |
+| `rename_conversation`       | 修改当前会话标题。                            |
+
+例如：「把这段对话移到学习分组，标成蓝色，并重命名为 TypeScript 笔记。」写入操作遵循「每次询问 / Auto」，关闭的工具仍不可执行。操作对象绑定发起请求的会话，生成期间切换聊天不会改动其他会话；工具在本地保存成功后才返回成功回执。
 
 ## 生图工作室与画廊
 
@@ -94,9 +118,9 @@ Agent 通过 `list_tools` 发现已注册能力，内置时间、计算、网页
 
 需要 **uTools 8**。在「uTools 开发者工具」中新建插件项目，选择「导入源码工程」，导入构建目录的 `plugin.json`，再「接入开发」并运行。
 
-运行 `npm run package` 可生成 `release/lumen-0.2.4-local.zip`，解压后的 `Lumen/plugin.json` 是导入入口。该构建包不需要 Node 环境，也不包含个人配置。发行文件见 [GitHub Releases](https://github.com/Saktawdi/utools-lumen/releases)。
+运行 `npm run package` 可生成 `release/lumen-0.2.5-local.zip`，解压后的 `Lumen/plugin.json` 是导入入口。该构建包不需要 Node 环境，也不包含个人配置。已发布的发行文件见 [GitHub Releases](https://github.com/Saktawdi/utools-lumen/releases)。
 
-如需 `.upxs`，请在 uTools 开发者工具中使用「构建离线安装包」。当前为 **0.2.4 Beta**，uTools 插件市场仍在审核，审核通过前可从 GitHub 下载本地导入包。开发模式下的超级面板等入口受宿主限制。
+如需 `.upxs`，请在 uTools 开发者工具中使用「构建离线安装包」。当前为 **0.2.5 Beta**，uTools 插件市场仍在审核，审核通过前可从 GitHub 下载已发布的本地导入包。开发模式下的超级面板等入口受宿主限制。
 
 修改 preload 后需要完全退出插件再打开，普通页面重载不能重新加载 Node 桥接。
 
@@ -116,7 +140,7 @@ npm run package
 
 Windows 可双击 `start-local.cmd` 启动浏览器版本，首次运行会安装锁定的开发依赖；关闭该命令窗口即停止服务。生图等功能与插件共用运行时，可独立于 uTools 开发和测试。修改 `runtime/` 后需重启开发服务器；页面样式和组件支持热更新。
 
-`test:native` 在 ESM 入口中加载实际构建的 preload，验证模块边界、存储、权限模式和工具初始化，同时模拟宿主拒绝创建 Worker。`dist/package.json` 必须随插件保留，避免继承根工程的 ESM 模式。
+`test:native` 在 ESM 入口中加载实际构建的 preload，验证模块边界、存储、权限模式、六个会话工具的调用与回执，同时模拟宿主拒绝创建 Worker。`dist/package.json` 必须随插件保留，避免继承根工程的 ESM 模式。
 
 工程结构：`src/` 界面与状态，`runtime/` 协议、网络、工具和存储，`scripts/` 构建与维护，`tests/` 核心回归，`assets/screenshots/` 文档展示图。模型匹配逻辑维护在 `src/model-catalog.ts`，开发与构建时同步生成原生运行时，测试校验两端一致。
 
@@ -133,6 +157,8 @@ JSON 备份默认不含聊天／生图供应商、搜索和 HTTP 工具的密钥
 ## 参考与许可
 
 模型管理与参数配置交互参考 [opentreelearn](https://github.com/Saktawdi/opentreelearn)，独立实现。能力元数据来自 [models.dev](https://models.dev)，仅辅助设置，实际能力以供应商为准。
+
+会话分组、彩色文件夹、收展、拖拽和右键菜单交互参考 [OpenWorktree](https://github.com/Saktawdi/OpenWorktree)，独立实现。使用浏览器原生拖拽与 CSS 动画，无新增运行时依赖。
 
 Token 统计的信息组织参考 [ZCode](https://github.com/zai-org/ZCode) 的开源用量页面，独立实现，无新增图表依赖。模型身份匹配参考其 [Provider Registry](https://github.com/zai-org/ZCode/blob/main/apps/zcode-cli/packages/bootstrap/src/app/provider-registry-selection.ts) 与[模型引用解析](https://github.com/zai-org/ZCode/blob/main/apps/zcode-cli/packages/core/src/tool/handlers/model-reference.ts)，增加中转服务命名兼容，并保留有歧义的能力供手动配置。
 

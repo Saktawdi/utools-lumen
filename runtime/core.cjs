@@ -61,6 +61,7 @@ class Core {
     this.store = options.store || new LocalStore(options.directory);
     this.controller = null;
     this.approvals = new Map();
+    this.conversationActions = new Map();
     this.toolPermission = "prompt";
     this.extraTools = [];
     this.catalogPromise = null;
@@ -221,6 +222,40 @@ class Core {
     if (mode === "always_allow")
       for (const id of this.approvals.keys()) this.approve(id, true);
   }
+  conversationResult(id, result, error) {
+    const pending = this.conversationActions.get(id);
+    if (!pending) return;
+    pending.finish(
+      error ? new Error(String(error).slice(0, 500)) : null,
+      result,
+    );
+  }
+  requestConversationAction(command, onEvent, signal) {
+    signal.throwIfAborted();
+    return new Promise((resolve, reject) => {
+      const id = crypto.randomUUID();
+      let timer;
+      const finish = (error, result) => {
+        if (!this.conversationActions.delete(id)) return;
+        clearTimeout(timer);
+        signal.removeEventListener("abort", aborted);
+        if (error) reject(error);
+        else resolve(result);
+      };
+      const aborted = () => finish(new Error("会话操作已取消"));
+      this.conversationActions.set(id, { finish });
+      signal.addEventListener("abort", aborted, { once: true });
+      timer = setTimeout(
+        () => finish(new Error("会话界面未及时响应，请重新打开插件后重试")),
+        30000,
+      );
+      try {
+        onEvent({ type: "conversation-action", id, command });
+      } catch (error) {
+        finish(error);
+      }
+    });
+  }
   async chat(args, onEvent) {
     if (this.controller) throw new Error("已有请求正在运行");
     const controller = new AbortController();
@@ -366,6 +401,21 @@ class Core {
               settings,
               signal,
               attachments,
+              conversation: (command) => {
+                const id = args.conversationId;
+                if (typeof id !== "string" || !id)
+                  throw new Error("缺少当前会话 ID，请更新插件后重试");
+                // Scope is captured at request start, independent of active UI navigation.
+                if (command.id && command.id !== id)
+                  throw new Error("只能管理发起本次请求的当前会话");
+                return this.requestConversationAction(
+                  ["current", "rename", "move", "color"].includes(command.type)
+                    ? { ...command, id }
+                    : command,
+                  onEvent,
+                  signal,
+                );
+              },
               generateImage: async (params) => {
                 const choices = (settings.imageProviders || []).filter(
                   (p) => p.enabled && p.models?.length,

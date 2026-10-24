@@ -1,5 +1,9 @@
 import { freshState, newProvider } from "./defaults";
 import { parseReasoningLevels } from "./reasoning-levels";
+import {
+  isConversationColor,
+  parseConversationGroup,
+} from "./conversation-data";
 import type {
   AppState,
   Conversation,
@@ -263,11 +267,42 @@ export function mergeState(raw: AppState | null): AppState {
   };
   if (!settings.skins.some((skin) => skin.id === settings.skin))
     settings.skin = settings.skins[0].id;
+  const seenGroups = new Set<string>();
+  const conversationGroups = (
+    Array.isArray(raw.conversationGroups) ? raw.conversationGroups : []
+  ).flatMap((value) => {
+    try {
+      const group = parseConversationGroup(value);
+      if (seenGroups.has(group.id)) return [];
+      seenGroups.add(group.id);
+      return [group];
+    } catch {
+      return [];
+    }
+  });
+  const conversations = (raw.conversations || []).map((c) => ({
+    ...c,
+    groupId: c.groupId && seenGroups.has(c.groupId) ? c.groupId : undefined,
+    color: isConversationColor(c.color) ? c.color : undefined,
+    archived: c.archived === true,
+    unread: c.unread === true,
+  }));
+  const ids = new Set(conversations.map((c) => c.id));
   return {
     ...initial,
     ...raw,
     settings,
-    conversations: raw.conversations || [],
+    conversations,
+    conversationGroups,
+    conversationOrder: [
+      ...new Set(
+        (Array.isArray(raw.conversationOrder)
+          ? raw.conversationOrder
+          : []
+        ).filter((id) => typeof id === "string" && ids.has(id)),
+      ),
+    ],
+    ungroupedCollapsed: raw.ungroupedCollapsed === true,
   };
 }
 export function agentSettings(settings: Settings): Settings {
@@ -403,6 +438,12 @@ export function importBackup(
           "list_attachments",
           "read_attachment",
           "generate_image",
+          "get_current_conversation",
+          "list_conversation_groups",
+          "create_conversation_group",
+          "move_conversation",
+          "set_conversation_color",
+          "rename_conversation",
         ].includes(n),
       )
     )
@@ -437,6 +478,31 @@ export function importBackup(
     };
   }
   const conversations = new Map(current.conversations.map((c) => [c.id, c]));
+  const groups = new Map(current.conversationGroups.map((g) => [g.id, g]));
+  if (data.conversationGroups !== undefined) {
+    if (
+      !Array.isArray(data.conversationGroups) ||
+      data.conversationGroups.length > 200
+    )
+      throw new Error("分组列表格式无效");
+    const seen = new Set<string>();
+    for (const value of data.conversationGroups) {
+      const group = parseConversationGroup(value);
+      if (seen.has(group.id)) throw new Error("分组 ID 重复");
+      seen.add(group.id);
+      groups.set(group.id, group);
+    }
+    if (groups.size > 200) throw new Error("最多保留 200 个分组");
+  }
+  const importedOrder =
+    data.conversationOrder === undefined
+      ? []
+      : strings(data.conversationOrder, "会话顺序");
+  if (
+    data.ungroupedCollapsed !== undefined &&
+    typeof data.ungroupedCollapsed !== "boolean"
+  )
+    throw new Error("分组收展设置无效");
   if (data.conversations !== undefined) {
     if (!Array.isArray(data.conversations)) throw new Error("对话列表格式无效");
     for (const c of data.conversations) {
@@ -447,6 +513,15 @@ export function importBackup(
         !Array.isArray(c.messages)
       )
         throw new Error("对话条目格式无效");
+      if (
+        (c.groupId !== undefined &&
+          (typeof c.groupId !== "string" || !c.groupId)) ||
+        (c.color !== undefined && !isConversationColor(c.color))
+      )
+        throw new Error("会话分组或颜色格式无效");
+      for (const key of ["pinned", "archived", "unread"])
+        if (c[key] !== undefined && typeof c[key] !== "boolean")
+          throw new Error("会话标记格式无效");
       for (const m of c.messages) {
         if (
           !object(m) ||
@@ -517,6 +592,14 @@ export function importBackup(
       providers: [...providers.values()],
     },
     conversations: [...conversations.values()],
+    conversationGroups: [...groups.values()],
+    conversationOrder: [
+      ...new Set([...importedOrder, ...current.conversationOrder]),
+    ],
+    ungroupedCollapsed:
+      typeof data.ungroupedCollapsed === "boolean"
+        ? data.ungroupedCollapsed
+        : current.ungroupedCollapsed,
   });
   return { state, count: source.length };
 }

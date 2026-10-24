@@ -163,7 +163,34 @@ export type Conversation = {
   modelKey?: string;
   effort?: string;
   pinned?: boolean;
+  groupId?: string;
+  color?: string;
+  archived?: boolean;
+  unread?: boolean;
 };
+export type ConversationGroup = {
+  id: string;
+  name: string;
+  color: string;
+  collapsed?: boolean;
+};
+export type ConversationAction =
+  | { type: "group-create"; group: ConversationGroup; conversationId?: string }
+  | { type: "group-edit"; id: string; name: string; color: string }
+  | { type: "group-delete"; id: string }
+  | { type: "group-collapse"; id?: string; collapsed: boolean }
+  | { type: "collapse-all"; collapsed: boolean }
+  | { type: "group-reorder"; id: string; targetId: string; after: boolean }
+  | { type: "rename"; id: string; title: string }
+  | { type: "color"; id: string; color?: string }
+  | { type: "move"; id: string; groupId?: string }
+  | { type: "pin"; id: string; pinned: boolean }
+  | { type: "archive"; id: string; archived: boolean }
+  | { type: "unread"; id: string; unread: boolean }
+  | { type: "delete"; id: string }
+  | { type: "reorder"; id: string; targetId: string; after: boolean };
+export type ConversationCommand =
+  { type: "current"; id: string } | { type: "groups" } | ConversationAction;
 export type ToolInfo = {
   name: string;
   title: string;
@@ -211,6 +238,9 @@ export type Settings = {
 export type AppState = {
   settings: Settings;
   conversations: Conversation[];
+  conversationGroups: ConversationGroup[];
+  conversationOrder: string[];
+  ungroupedCollapsed?: boolean;
   activeId?: string;
 };
 export type StreamEvent = {
@@ -224,7 +254,8 @@ export type StreamEvent = {
     | "error"
     | "done"
     | "approval"
-    | "approval-resolved";
+    | "approval-resolved"
+    | "conversation-action";
   text?: string;
   call?: ToolCall;
   id?: string;
@@ -232,6 +263,7 @@ export type StreamEvent = {
   args?: unknown;
   usage?: TokenUsage;
   images?: ImageAsset[];
+  command?: ConversationCommand;
 };
 export type ModelEntry = {
   key: string;
@@ -264,12 +296,18 @@ export type Bridge = {
       effort: string;
       messages: Message[];
       settings: Settings;
+      conversationId?: string;
     },
     onEvent: (event: StreamEvent) => void,
   ) => Promise<void>;
   stop: () => void;
   approve: (id: string, allow: boolean) => void;
   setToolPermission: (mode: ToolPermissionMode) => Promise<void>;
+  conversationResult: (
+    id: string,
+    result?: unknown,
+    error?: string,
+  ) => Promise<void>;
   searchTest: (config: SearchConfig, query: string) => Promise<unknown>;
   exportFile: (name: string, content: string) => Promise<void>;
   openExternal: (url: string) => void;

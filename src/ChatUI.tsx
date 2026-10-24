@@ -469,6 +469,7 @@ function PlusIcon() {
   return <span className="plus-text">+</span>;
 }
 export function Composer({
+  leading,
   draft,
   setDraft,
   attachments,
@@ -506,6 +507,7 @@ export function Composer({
   onCapture: () => void;
   onPasteText: (text: string) => boolean;
   quickLabel?: string;
+  leading?: ReactNode;
   onCancelQuick: () => void;
   onSend: () => void;
   onStop: () => void;
@@ -563,6 +565,7 @@ export function Composer({
   };
   return (
     <div className="composer-wrap">
+      {leading}
       {quickLabel && (
         <div className="quick-banner">
           <span>{quickLabel}</span>
