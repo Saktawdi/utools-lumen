@@ -10,7 +10,7 @@
 
 - 图片支持粘贴、拖放、选图和 uTools 图片入口；文本及代码文件可作为附件。
 - 模型支持复选、筛选全选、拖动框选（Shift 追加）和输入 ID 联想添加。
-- 自动匹配 models.dev 的视觉、工具、上下文与推理参数；手动设置优先。可选推理强度，也可输入上游支持的值。
+- 自动匹配 models.dev 的视觉、工具、上下文与推理参数，兼容渠道前缀、命名空间、日期及推理档位后缀；完整模型名与手动设置优先。可选推理强度，也可输入上游支持的值。
 - OpenAI Chat、OpenAI Responses、Anthropic Messages、Google Gemini 四种协议。兼容网关应选择其实际实现的协议。
 - 每个供应商、搜索服务均可批量导入多个密钥，去重、轮询和失败切换。
 - AnySearch 官方 MCP、Tavily、SearXNG、自定义 JSON 搜索；配置页可测试连接。
@@ -77,6 +77,8 @@ Windows 可双击 `start-local.cmd` 启动浏览器版本，首次运行会安�
 
 结构：`src/` 界面与状态，`runtime/` 协议、网络、工具和加密存储，`scripts/` 构建与维护，`tests/` 核心回归。仓库中的 `docs/` 为本地开发文档，不属于公开项目。
 
+模型匹配逻辑维护在 `src/model-catalog.ts`；开发及构建时自动生成原生运行时，测试会校验两端同步。匹配按完整供应商/模型标识、别名、发布标签及渠道前缀依次降级，保留架构版本、尺寸与模态区别；有歧义的能力数据保留手动配置。识别过程只补充能力元数据，请求仍使用供应商原始模型 ID。
+
 ## 数据
 
 Windows 数据目录为 `%APPDATA%\uTools\lumen`。供应商、密钥与聊天使用 AES-256-GCM 存储，写入时保留上一版 `.bak`。`vault.key` 是本机解密密钥，也位于该目录；备份整个目录时需同时保存它。
@@ -94,6 +96,8 @@ JSON 备份默认不含聊天/生图供应商、搜索和 HTTP 工具的密钥�
 模型管理与严格参数匹配交互参考 [opentreelearn](https://github.com/Saktawdi/opentreelearn)，独立实现。能力元数据来自 [models.dev](https://models.dev)，作为设置辅助，实际能力以供应商为准。
 
 Token 统计的信息组织参考 [ZCode](https://github.com/zai-org/ZCode) 的开源用量页面，独立实现，无新增图表依赖。
+
+模型身份匹配参考 ZCode 的 [Provider Registry](https://github.com/zai-org/ZCode/blob/main/apps/zcode-cli/packages/bootstrap/src/app/provider-registry-selection.ts) 与[模型引用解析](https://github.com/zai-org/ZCode/blob/main/apps/zcode-cli/packages/core/src/tool/handlers/model-reference.ts)，在完整身份优先的基础上增加中转服务名称兼容，独立实现。
 
 当前验证平台为 Windows / uTools 8.0.1。其他系统尚未进行宿主实测。
 
