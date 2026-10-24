@@ -68,6 +68,7 @@ export const freshState = (): AppState => ({
     translationLanguage: "cn",
     compact: false,
     reduceMotion: false,
+    chatLayout: "split",
   },
   conversations: [],
 });

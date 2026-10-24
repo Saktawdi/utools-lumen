@@ -32,6 +32,8 @@ import {
   WandSparkles,
 } from "lucide-react";
 import { bridge, mergeState } from "./bridge";
+import { skinVariables } from "./appearance-utils";
+import { agentSettings } from "./state-data";
 import { freshState } from "./defaults";
 import Settings from "./Settings";
 import { languageName, quickRequest } from "./quick-commands";
@@ -75,6 +77,7 @@ const makeConversation = (): Conversation => ({
   updatedAt: Date.now(),
 });
 type StreamMetrics = {
+  conversationId?: string;
   outputTokens: number;
   outputRate: number;
   active: boolean;
@@ -83,6 +86,7 @@ export default function App() {
   const [state, setState] = useState<AppState>(freshState);
   const stateRef = useRef(state);
   const [ready, setReady] = useState(false);
+  const [darkTheme, setDarkTheme] = useState(false);
   const [loadError, setLoadError] = useState("");
   const [saveError, setSaveError] = useState("");
   const [draft, setDraft] = useState("");
@@ -137,6 +141,12 @@ export default function App() {
   const loading = useRef(false);
   const sending = useRef(false);
   const settings = state.settings;
+  const activeSkin = useMemo(
+    () =>
+      settings.skins.find((skin) => skin.id === settings.skin) ||
+      settings.skins[0],
+    [settings.skin, settings.skins],
+  );
   const active = state.conversations.find((c) => c.id === state.activeId);
   const entries = useMemo(
     () => providerEntries(settings.providers),
@@ -307,30 +317,25 @@ export default function App() {
     };
   }, [persist]);
   useEffect(() => {
-    const skin =
-      settings.skins.find((s) => s.id === settings.skin) || settings.skins[0];
     const query = window.matchMedia("(prefers-color-scheme: dark)");
     const apply = () => {
       const dark =
         settings.theme === "dark" ||
         (settings.theme === "system" && query.matches);
       document.documentElement.dataset.theme = dark ? "dark" : "light";
+      setDarkTheme(dark);
       document.documentElement.dataset.motion = settings.reduceMotion
         ? "reduced"
         : "full";
-      document.documentElement.style.setProperty(
-        "--accent",
-        dark ? skin.darkAccent : skin.accent,
-      );
-      document.documentElement.style.setProperty(
-        "--skin-bg",
-        (dark ? skin.darkBackground : skin.background) || "",
-      );
+      for (const [name, value] of Object.entries(
+        skinVariables(activeSkin, dark),
+      ))
+        document.documentElement.style.setProperty(name, value);
     };
     apply();
     query.addEventListener("change", apply);
     return () => query.removeEventListener("change", apply);
-  }, [settings.theme, settings.skin, settings.skins, settings.reduceMotion]);
+  }, [settings.theme, activeSkin, settings.reduceMotion]);
   const focusComposer = () =>
     setTimeout(() => window.dispatchEvent(new Event("lumen-focus")), 30);
   const newChat = useCallback(() => {
@@ -363,7 +368,6 @@ export default function App() {
       setSearchOpen(false);
       setMenu("");
       setAtBottom(true);
-      setTimeout(() => tail.current?.scrollIntoView(), 30);
     },
     [update],
   );
@@ -392,6 +396,12 @@ export default function App() {
     window.addEventListener("keydown", listener);
     return () => window.removeEventListener("keydown", listener);
   }, [newChat, openSettings]);
+  useEffect(() => {
+    if (ready && view === "chat") {
+      tail.current?.scrollIntoView({ behavior: "instant" });
+      setAtBottom(true);
+    }
+  }, [ready, state.activeId, view]);
   useEffect(() => {
     if (atBottom && busy) tail.current?.scrollIntoView({ behavior: "instant" });
   }, [active?.messages, atBottom, busy]);
@@ -578,7 +588,12 @@ export default function App() {
       startedAt: 0,
       outputTokens: 0,
     };
-    setStreamMetrics({ outputTokens: 0, outputRate: 0, active: true });
+    setStreamMetrics({
+      conversationId: conversation.id,
+      outputTokens: 0,
+      outputRate: 0,
+      active: true,
+    });
     setAtBottom(true);
     setToolsOpen(false);
     const reply: Message = {
@@ -615,6 +630,7 @@ export default function App() {
       if (metrics.startedAt) {
         const elapsed = Math.max(100, Date.now() - metrics.startedAt) / 1000;
         setStreamMetrics({
+          conversationId: cid,
           outputTokens: metrics.outputTokens,
           outputRate: metrics.outputTokens / elapsed,
           active: true,
@@ -647,7 +663,7 @@ export default function App() {
           config: target.config,
           effort: requestEffort,
           messages,
-          settings: stateRef.current.settings,
+          settings: agentSettings(stateRef.current.settings),
         },
         (event) => {
           switch (event.type) {
@@ -720,6 +736,7 @@ export default function App() {
         ? Math.max(100, Date.now() - metrics.startedAt) / 1000
         : 0;
       setStreamMetrics({
+        conversationId: cid,
         outputTokens: metrics.outputTokens,
         outputRate: elapsed ? metrics.outputTokens / elapsed : 0,
         active: false,
@@ -1265,7 +1282,10 @@ export default function App() {
       <main
         style={view === "studio" ? { display: "none" } : undefined}
         className={cx("main", !active?.messages.length && "empty-chat")}
+        data-layout={settings.chatLayout}
+        data-bubbles={activeSkin.bubbleStyle || "soft"}
       >
+        <div className="chat-backdrop" aria-hidden="true" />
         <header className="topbar">
           <div className="topbar-left">
             {!sidebar && (
@@ -1306,19 +1326,12 @@ export default function App() {
                   ...s,
                   settings: {
                     ...s.settings,
-                    theme:
-                      document.documentElement.dataset.theme === "dark"
-                        ? "light"
-                        : "dark",
+                    theme: darkTheme ? "light" : "dark",
                   },
                 }))
               }
             >
-              {document.documentElement.dataset.theme === "dark" ? (
-                <Moon size={17} />
-              ) : (
-                <Sun size={17} />
-              )}
+              {darkTheme ? <Moon size={17} /> : <Sun size={17} />}
             </IconButton>
             {active?.messages.length ? (
               <IconButton
@@ -1358,6 +1371,8 @@ export default function App() {
                   onEdit={editMessage}
                   onImage={setImage}
                   notify={notify}
+                  userAvatar={settings.userAvatar}
+                  agentAvatar={settings.agentAvatar}
                 />
               ))}
               {approval && streamConversation === active.id && (
@@ -1468,8 +1483,16 @@ export default function App() {
           contextTokens={contextMetrics.tokens}
           contextLimit={contextMetrics.limit}
           contextEstimated={contextMetrics.estimated}
-          outputRate={streamMetrics.outputRate}
-          outputTokens={streamMetrics.outputTokens}
+          outputRate={
+            streamMetrics.conversationId === active?.id
+              ? streamMetrics.outputRate
+              : 0
+          }
+          outputTokens={
+            streamMetrics.conversationId === active?.id
+              ? streamMetrics.outputTokens
+              : 0
+          }
           editing={!!edit}
           onCancelEdit={() => {
             setEdit(undefined);

@@ -13,7 +13,8 @@ const bundled = buildSync({
 const compiled = new Module(path.join(__dirname, "state-bundle.cjs"), module);
 compiled.filename = path.join(__dirname, "state-bundle.cjs");
 compiled._compile(bundled, compiled.filename);
-const { mergeState, importBackup, exportBackup } = compiled.exports;
+const { mergeState, importBackup, exportBackup, parseSkin, agentSettings } =
+  compiled.exports;
 function workspace() {
   return mergeState({
     settings: {
@@ -172,4 +173,143 @@ test("image references in backups validate metadata without embedding local imag
     original.conversations[0].messages[0].generatedImages,
     undefined,
   );
+});
+
+test("legacy preferences gain split chat layout; invalid appearance data falls back without losing chat history", () => {
+  const old = workspace();
+  assert.equal(old.settings.chatLayout, "split");
+  const loaded = mergeState({
+    ...old,
+    settings: {
+      ...old.settings,
+      chatLayout: "invalid",
+      skin: "missing",
+      userAvatar: "https://example.test/avatar.png",
+      skins: [{ id: "broken" }],
+    },
+  });
+  assert.equal(loaded.settings.chatLayout, "split");
+  assert.equal(loaded.settings.userAvatar, undefined);
+  assert.equal(loaded.settings.skin, "jade");
+  assert.deepEqual(loaded.conversations, old.conversations);
+});
+
+test("avatars, wallpaper and all custom bubble preferences survive disk JSON and backup restoration", () => {
+  const original = workspace();
+  const image = "data:image/webp;base64,UklGRg==";
+  original.settings.chatLayout = "single";
+  original.settings.userAvatar = image;
+  original.settings.agentAvatar = image;
+  original.settings.skin = "custom-test";
+  const skin = {
+    id: "custom-test",
+    name: "My skin",
+    description: "Local",
+    custom: true,
+    accent: "#336699",
+    darkAccent: "#99bbff",
+    background: "#ffffff",
+    darkBackground: "#202020",
+    backgroundImage: image,
+    backgroundBlur: 24,
+    backgroundOpacity: 0.35,
+    backgroundPosition: "top",
+    bubbleStyle: "outline",
+    bubbleRadius: 9,
+    bubbleOpacity: 0.8,
+    userBubble: "#eefaff",
+    darkUserBubble: "#203040",
+    agentBubble: "#ffffff",
+    darkAgentBubble: "#333333",
+  };
+  original.settings.skins = [skin];
+  const onDisk = mergeState(JSON.parse(JSON.stringify(original)));
+  const restored = importBackup(
+    JSON.parse(JSON.stringify(exportBackup(onDisk, false))),
+    workspace(),
+  ).state;
+  assert.equal(restored.settings.chatLayout, "single");
+  assert.equal(restored.settings.userAvatar, image);
+  assert.equal(restored.settings.agentAvatar, image);
+  assert.equal(restored.settings.skin, skin.id);
+  assert.deepEqual(restored.settings.skins, [skin]);
+  const cleared = importBackup(
+    { providers: [], settings: { userAvatar: "", agentAvatar: "" } },
+    restored,
+  ).state;
+  assert.equal(cleared.settings.userAvatar, undefined);
+  assert.equal(cleared.settings.agentAvatar, undefined);
+});
+
+test("appearance imports reject remote images, active content and excessive settings atomically", () => {
+  const original = workspace();
+  const snapshot = structuredClone(original);
+  for (const badImage of [
+    "https://example.test/image.png",
+    "file:///private.png",
+    "data:image/svg+xml;base64,PHN2Zz4=",
+    "data:image/png;base64,');url(https://example.test)",
+    "data:image/png;base64," + "A".repeat(4 * 1024 * 1024),
+  ]) {
+    assert.throws(
+      () =>
+        importBackup(
+          { providers: [], settings: { userAvatar: badImage } },
+          original,
+        ),
+      /本地图片/,
+    );
+    assert.throws(
+      () =>
+        parseSkin({ ...original.settings.skins[0], backgroundImage: badImage }),
+      /本地图片/,
+    );
+  }
+  for (const patch of [
+    { backgroundBlur: -1 },
+    { backgroundBlur: 33 },
+    { backgroundOpacity: 1.1 },
+    { bubbleOpacity: 0.1 },
+    { bubbleRadius: Infinity },
+    { bubbleStyle: "unknown" },
+    { backgroundPosition: "url(example)" },
+    { userBubble: "red; color: red" },
+  ]) {
+    assert.throws(() =>
+      importBackup(
+        {
+          providers: [],
+          settings: { skins: [{ ...original.settings.skins[0], ...patch }] },
+        },
+        original,
+      ),
+    );
+  }
+  assert.throws(
+    () =>
+      importBackup(
+        { providers: [], settings: { chatLayout: "unknown" } },
+        original,
+      ),
+    /聊天布局/,
+  );
+  assert.deepEqual(original, snapshot);
+});
+
+test("Agent transport omits appearance images while preserving provider and tool settings", () => {
+  const state = workspace();
+  state.settings.userAvatar = "data:image/png;base64,eA==";
+  state.settings.agentAvatar = "data:image/png;base64,eA==";
+  state.settings.skins[0] = {
+    ...state.settings.skins[0],
+    backgroundImage: "data:image/png;base64,eA==",
+  };
+  const snapshot = structuredClone(state);
+  const request = agentSettings(state.settings);
+  assert.equal(JSON.stringify(request).includes("data:image/"), false);
+  assert.deepEqual(request.skins, []);
+  assert.deepEqual(request.providers, state.settings.providers);
+  assert.deepEqual(request.search, state.settings.search);
+  assert.equal(request.toolPermission, state.settings.toolPermission);
+  assert.deepEqual(state, snapshot);
 });

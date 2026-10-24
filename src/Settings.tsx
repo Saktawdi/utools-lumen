@@ -10,15 +10,12 @@ import {
   ExternalLink,
   Globe2,
   Loader2,
-  Monitor,
-  Moon,
   Palette,
   Plus,
   Settings2,
   ShieldCheck,
   Sparkles,
   SquareDashedMousePointer,
-  Sun,
   Trash2,
   Waypoints,
   Wrench,
@@ -27,14 +24,10 @@ import {
   ChartNoAxesCombined,
 } from "lucide-react";
 import { bridge } from "./bridge";
+import Appearance from "./Appearance";
 import { newProvider } from "./defaults";
 import { matchModel } from "./model-catalog";
-import {
-  exportBackup,
-  importBackup,
-  parseSkin,
-  parseCustomTool,
-} from "./state-data";
+import { exportBackup, importBackup, parseCustomTool } from "./state-data";
 import type {
   AppState,
   ModelConfig,
@@ -1042,150 +1035,6 @@ function SearchSettings({
         获取 AnySearch 密钥
         <ExternalLink size={13} />
       </button>
-    </div>
-  );
-}
-function Appearance({
-  settings,
-  update,
-  notify,
-}: {
-  settings: SettingsType;
-  update: (p: Partial<SettingsType>) => void;
-  notify: (t: string) => void;
-}) {
-  const importRef = useRef<HTMLInputElement>(null);
-  return (
-    <div className="settings-section">
-      <h3>显示模式</h3>
-      <div className="theme-options">
-        {(
-          [
-            { id: "light", label: "浅色", icon: Sun },
-            { id: "dark", label: "深色", icon: Moon },
-            { id: "system", label: "跟随系统", icon: Monitor },
-          ] as const
-        ).map((t) => (
-          <button
-            key={t.id}
-            className={cx("theme-card", t.id === settings.theme && "active")}
-            onClick={() => update({ theme: t.id })}
-          >
-            <div className={"theme-preview " + t.id}>
-              <span />
-              <span />
-              <span />
-            </div>
-            <span>
-              <t.icon size={15} />
-              {t.label}
-              {settings.theme === t.id && <Check size={13} />}
-            </span>
-          </button>
-        ))}
-      </div>
-      <div className="section-divider" />
-      <div className="row between">
-        <h3>皮肤库</h3>
-        <div className="row gap">
-          <button
-            className="text-button"
-            onClick={() => importRef.current?.click()}
-          >
-            <ArrowUpFromLine size={13} />
-            导入皮肤
-          </button>
-          <button
-            className="text-button"
-            onClick={() =>
-              void bridge
-                .exportFile(
-                  "lumen-skin.json",
-                  JSON.stringify(
-                    settings.skins.find((s) => s.id === settings.skin),
-                    null,
-                    2,
-                  ),
-                )
-                .catch((error: Error) => notify(error.message))
-            }
-          >
-            <ArrowDownToLine size={13} />
-            导出
-          </button>
-        </div>
-      </div>
-      <div className="skin-grid">
-        {settings.skins.map((s) => (
-          <button
-            key={s.id}
-            className={cx("skin-card", settings.skin === s.id && "active")}
-            onClick={() => update({ skin: s.id })}
-          >
-            <div
-              className="skin-swatch"
-              style={{ background: s.background || "#f6f8f6" }}
-            >
-              <i style={{ background: s.accent }} />
-              <i style={{ background: s.darkAccent }} />
-              <i style={{ background: s.darkBackground || "#202421" }} />
-              {settings.skin === s.id && (
-                <span style={{ color: s.accent }}>
-                  <Check size={15} />
-                </span>
-              )}
-            </div>
-            <strong>{s.name}</strong>
-            <small>{s.description}</small>
-          </button>
-        ))}
-      </div>
-      <input
-        ref={importRef}
-        hidden
-        type="file"
-        accept=".json"
-        onChange={async (e) => {
-          try {
-            const f = e.target.files?.[0];
-            if (f) {
-              const skin = parseSkin(JSON.parse(await f.text()));
-              update({
-                skins: [
-                  ...settings.skins.filter((s) => s.id !== skin.id),
-                  {
-                    id: String(skin.id),
-                    name: String(skin.name),
-                    description: String(skin.description || ""),
-                    accent: skin.accent,
-                    darkAccent: skin.darkAccent,
-                    background: skin.background,
-                    darkBackground: skin.darkBackground,
-                  },
-                ],
-                skin: skin.id,
-              });
-              notify("皮肤已导入");
-            }
-          } catch (error) {
-            notify((error as Error).message);
-          }
-          e.target.value = "";
-        }}
-      />
-      <div className="section-divider" />
-      <Preference
-        label="紧凑布局"
-        description="减小消息间距，更适合小窗口。"
-        checked={settings.compact}
-        onChange={(compact) => update({ compact })}
-      />
-      <Preference
-        label="减少动态效果"
-        description="使用更安静的过渡，也尊重系统偏好。"
-        checked={settings.reduceMotion}
-        onChange={(reduceMotion) => update({ reduceMotion })}
-      />
     </div>
   );
 }

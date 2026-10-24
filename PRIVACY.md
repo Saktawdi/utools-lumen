@@ -15,6 +15,10 @@ that same directory is needed to decrypt the data. Anyone with access to both
 the key and encrypted files can read them. During use, the plugin decrypts data
 in memory.
 
+Custom avatars and wallpaper are resized static copies stored with local
+preferences. They are not included in model requests. Skin JSON exports include
+the wallpaper; configuration backups include custom skins and avatars.
+
 Usage records are stored separately from chats and image jobs. Deleting a chat
 or gallery item does not remove its historical usage. Deleting a gallery item
 removes its original images, references, and thumbnails; linked images in chats

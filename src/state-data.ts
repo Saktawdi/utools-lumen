@@ -31,6 +31,20 @@ function headers(value: unknown): Record<string, string> {
     throw new Error("请求头必须是字符串键值对象");
   return Object.fromEntries(Object.entries(value)) as Record<string, string>;
 }
+export function parseLocalImage(
+  value: unknown,
+  label: string,
+  limit = 4 * 1024 * 1024,
+): string | undefined {
+  if (value === undefined || value === "") return undefined;
+  if (
+    typeof value !== "string" ||
+    value.length > limit ||
+    !/^data:image\/(?:png|jpeg|webp|avif);base64,[a-z\d+/]+={0,2}$/i.test(value)
+  )
+    throw new Error(`${label}需要有效的本地图片，且大小不能超过限制`);
+  return value;
+}
 export function parseSkin(value: unknown): Skin {
   if (
     !object(value) ||
@@ -47,6 +61,23 @@ export function parseSkin(value: unknown): Skin {
       throw new Error("皮肤颜色需要使用 #RRGGBB");
     return v;
   };
+  const number = (key: string, min: number, max: number) => {
+    const v = value[key];
+    if (v === undefined) return undefined;
+    if (typeof v !== "number" || !Number.isFinite(v) || v < min || v > max)
+      throw new Error(`皮肤 ${key} 需要介于 ${min} 和 ${max} 之间`);
+    return v;
+  };
+  if (
+    value.bubbleStyle !== undefined &&
+    !["soft", "outline", "minimal"].includes(String(value.bubbleStyle))
+  )
+    throw new Error("气泡样式无效");
+  if (
+    value.backgroundPosition !== undefined &&
+    !["center", "top", "bottom"].includes(String(value.backgroundPosition))
+  )
+    throw new Error("背景位置无效");
   return {
     id: value.id,
     name: value.name,
@@ -55,6 +86,18 @@ export function parseSkin(value: unknown): Skin {
     darkAccent: color("darkAccent", true)!,
     background: color("background"),
     darkBackground: color("darkBackground"),
+    custom: value.custom === true,
+    backgroundImage: parseLocalImage(value.backgroundImage, "皮肤背景"),
+    backgroundBlur: number("backgroundBlur", 0, 32),
+    backgroundOpacity: number("backgroundOpacity", 0, 1),
+    backgroundPosition: value.backgroundPosition as Skin["backgroundPosition"],
+    bubbleStyle: value.bubbleStyle as Skin["bubbleStyle"],
+    bubbleRadius: number("bubbleRadius", 0, 28),
+    bubbleOpacity: number("bubbleOpacity", 0.45, 1),
+    userBubble: color("userBubble"),
+    darkUserBubble: color("darkUserBubble"),
+    agentBubble: color("agentBubble"),
+    darkAgentBubble: color("darkAgentBubble"),
   };
 }
 function modelConfigs(value: unknown): Record<string, ModelConfig> {
@@ -173,6 +216,22 @@ export function parseCustomTool(value: unknown): CustomTool {
 export function mergeState(raw: AppState | null): AppState {
   const initial = freshState();
   if (!raw) return initial;
+  const validImage = (value: unknown) => {
+    try {
+      return parseLocalImage(value, "头像", 384 * 1024);
+    } catch {
+      return undefined;
+    }
+  };
+  const validSkins = Array.isArray(raw.settings?.skins)
+    ? raw.settings.skins.flatMap((skin) => {
+        try {
+          return [parseSkin(skin)];
+        } catch {
+          return [];
+        }
+      })
+    : [];
   const settings: Settings = {
     ...initial.settings,
     ...raw.settings,
@@ -182,15 +241,27 @@ export function mergeState(raw: AppState | null): AppState {
         : "prompt",
     search: { ...initial.settings.search, ...raw.settings?.search },
     imageProviders: raw.settings?.imageProviders || [],
-    skins: raw.settings?.skins?.length
-      ? raw.settings.skins
-      : initial.settings.skins,
+    skins: validSkins?.length ? validSkins : initial.settings.skins,
+    chatLayout: raw.settings?.chatLayout === "single" ? "single" : "split",
+    userAvatar: validImage(raw.settings?.userAvatar),
+    agentAvatar: validImage(raw.settings?.agentAvatar),
   };
+  if (!settings.skins.some((skin) => skin.id === settings.skin))
+    settings.skin = settings.skins[0].id;
   return {
     ...initial,
     ...raw,
     settings,
     conversations: raw.conversations || [],
+  };
+}
+export function agentSettings(settings: Settings): Settings {
+  // Appearance belongs to the renderer. Avoid copying local photos over IPC/HTTP on every turn.
+  return {
+    ...settings,
+    skins: [],
+    userAvatar: undefined,
+    agentAvatar: undefined,
   };
 }
 export function exportBackup(state: AppState, includeKeys: boolean) {
@@ -200,6 +271,8 @@ export function exportBackup(state: AppState, includeKeys: boolean) {
   safe.settings.imageProviders =
     state.settings.imageProviders.map(parseImageProvider);
   safe.settings.customTools = state.settings.customTools.map(parseCustomTool);
+  safe.settings.userAvatar = state.settings.userAvatar || "";
+  safe.settings.agentAvatar = state.settings.agentAvatar || "";
   if (!includeKeys) {
     for (const p of safe.settings.providers) {
       p.keys = [];
@@ -269,6 +342,14 @@ export function importBackup(
       throw new Error("显示模式无效");
     patch.theme = imported.theme as Settings["theme"];
   }
+  if (imported.chatLayout !== undefined) {
+    if (!["split", "single"].includes(String(imported.chatLayout)))
+      throw new Error("聊天布局无效");
+    patch.chatLayout = imported.chatLayout as Settings["chatLayout"];
+  }
+  for (const key of ["userAvatar", "agentAvatar"] as const)
+    if (Object.hasOwn(imported, key))
+      patch[key] = parseLocalImage(imported[key], "头像", 384 * 1024);
   for (const key of ["compact", "reduceMotion"] as const)
     if (typeof imported[key] === "boolean") patch[key] = imported[key];
   for (const key of [

@@ -111,6 +111,18 @@ export type Skin = {
   darkAccent: string;
   background?: string;
   darkBackground?: string;
+  custom?: boolean;
+  backgroundImage?: string;
+  backgroundBlur?: number;
+  backgroundOpacity?: number;
+  backgroundPosition?: "center" | "top" | "bottom";
+  bubbleStyle?: "soft" | "outline" | "minimal";
+  bubbleRadius?: number;
+  bubbleOpacity?: number;
+  userBubble?: string;
+  darkUserBubble?: string;
+  agentBubble?: string;
+  darkAgentBubble?: string;
 };
 export type Attachment = {
   id: string;
@@ -192,6 +204,9 @@ export type Settings = {
   sendKey: "enter" | "ctrl-enter";
   compact: boolean;
   reduceMotion: boolean;
+  chatLayout: "split" | "single";
+  userAvatar?: string;
+  agentAvatar?: string;
 };
 export type AppState = {
   settings: Settings;
