@@ -10,6 +10,7 @@ import {
   Code2,
   Copy,
   FileText,
+  Gauge,
   Globe2,
   ImagePlus,
   Loader2,
@@ -37,6 +38,7 @@ import type {
   ToolPermissionMode,
 } from "./types";
 import { IconButton, Logo, Toggle, cx, usePopoverDismiss } from "./ui";
+import { formatTokenCount } from "./token-metrics";
 export function Welcome({
   onPrompt,
   onAttach,
@@ -477,6 +479,11 @@ export function Composer({
   config,
   effort,
   setEffort,
+  contextTokens,
+  contextLimit,
+  contextEstimated,
+  outputRate,
+  outputTokens,
   children,
   editing,
   onCancelEdit,
@@ -501,6 +508,11 @@ export function Composer({
   config: ModelConfig;
   effort: string;
   setEffort: (v: string) => void;
+  contextTokens: number;
+  contextLimit?: number;
+  contextEstimated: boolean;
+  outputRate: number;
+  outputTokens: number;
   children?: ReactNode;
   editing: boolean;
   onCancelEdit: () => void;
@@ -772,6 +784,59 @@ export function Composer({
               <ArrowUp size={19} />
             </button>
           )}
+        </div>
+      </div>
+      <div className="composer-metrics" aria-label="会话实时统计">
+        <div
+          className="composer-metric context-metric"
+          title={
+            contextLimit
+              ? `${contextEstimated ? "估算" : "已上报"}上下文：${contextTokens.toLocaleString()} / ${contextLimit.toLocaleString()} tokens`
+              : `${contextEstimated ? "估算" : "已上报"}上下文：${contextTokens.toLocaleString()} tokens；当前模型未提供上下文上限`
+          }
+        >
+          <span
+            className="context-meter-ring"
+            style={{
+              background: contextLimit
+                ? `conic-gradient(var(--accent) ${Math.min(100, Math.max(0, (contextTokens / contextLimit) * 100))}%, var(--surface-3) 0)`
+                : "conic-gradient(var(--surface-3) 0 100%)",
+            }}
+            role="img"
+            aria-label={
+              contextLimit
+                ? `上下文占用 ${Math.round((contextTokens / contextLimit) * 100)}%`
+                : "上下文上限未知"
+            }
+          >
+            <strong>
+              {contextLimit
+                ? `${Math.round((contextTokens / contextLimit) * 100)}%`
+                : "—"}
+            </strong>
+          </span>
+          <span className="composer-metric-copy">
+            <strong>
+              {formatTokenCount(contextTokens)}
+              {contextLimit
+                ? ` / ${formatTokenCount(contextLimit)}`
+                : " tokens"}
+            </strong>
+            <small>{contextEstimated ? "上下文估算" : "当前会话上下文"}</small>
+          </span>
+        </div>
+        <span className="composer-metric-divider" aria-hidden="true" />
+        <div
+          className={cx("composer-metric", outputRate > 0 && "metric-live")}
+          title={`${outputTokens.toLocaleString()} 输出 tokens · ${outputRate > 0 ? `${outputRate.toFixed(1)} tokens/s` : "等待输出"}`}
+        >
+          <Gauge size={16} strokeWidth={1.7} />
+          <span className="composer-metric-copy">
+            <strong>
+              {outputRate > 0 ? `${outputRate.toFixed(1)} tok/s` : "— tok/s"}
+            </strong>
+            <small>输出速率</small>
+          </span>
         </div>
       </div>
       <input

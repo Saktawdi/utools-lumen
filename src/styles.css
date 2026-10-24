@@ -1068,6 +1068,90 @@ kbd {
   height: 4px;
   opacity: 0.6;
 }
+.composer-metrics {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 16px;
+  min-height: 30px;
+  margin: 8px auto 0;
+  color: var(--muted);
+  font-size: 10px;
+  user-select: none;
+}
+.composer-metric {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  min-width: 132px;
+  color: var(--muted);
+}
+.composer-metric > svg {
+  color: var(--muted);
+  flex-shrink: 0;
+}
+.composer-metric.metric-live > svg {
+  color: var(--accent);
+  animation: metric-pulse 1.3s ease-in-out infinite;
+}
+.context-meter-ring {
+  position: relative;
+  display: grid;
+  place-items: center;
+  width: 26px;
+  height: 26px;
+  flex-shrink: 0;
+  border-radius: 50%;
+}
+.context-meter-ring::after {
+  content: "";
+  position: absolute;
+  inset: 4px;
+  border-radius: 50%;
+  background: var(--surface);
+}
+.context-meter-ring > strong {
+  position: relative;
+  z-index: 1;
+  color: var(--secondary);
+  font-size: 8px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+.composer-metric-copy {
+  min-width: 0;
+  line-height: 1.35;
+}
+.composer-metric-copy strong,
+.composer-metric-copy small {
+  display: block;
+  white-space: nowrap;
+}
+.composer-metric-copy strong {
+  color: var(--secondary);
+  font-size: 10px;
+  font-weight: 500;
+  font-variant-numeric: tabular-nums;
+}
+.composer-metric-copy small {
+  margin-top: 2px;
+  color: var(--muted);
+  font-size: 9px;
+}
+.composer-metric-divider {
+  width: 1px;
+  height: 20px;
+  background: var(--border);
+}
+@keyframes metric-pulse {
+  0%,
+  100% {
+    opacity: 0.55;
+  }
+  50% {
+    opacity: 1;
+  }
+}
 .composer-attachments {
   display: flex;
   flex-wrap: wrap;

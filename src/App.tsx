@@ -48,6 +48,7 @@ import type {
   ToolPermissionMode,
   ToolInfo,
 } from "./types";
+import { estimateContextTokens, estimateTextTokens } from "./token-metrics";
 import {
   ApprovalCard,
   Composer,
@@ -73,6 +74,11 @@ const makeConversation = (): Conversation => ({
   createdAt: Date.now(),
   updatedAt: Date.now(),
 });
+type StreamMetrics = {
+  outputTokens: number;
+  outputRate: number;
+  active: boolean;
+};
 export default function App() {
   const [state, setState] = useState<AppState>(freshState);
   const stateRef = useRef(state);
@@ -99,6 +105,16 @@ export default function App() {
   const [modelKey, setModelKey] = useState("");
   const [effort, setEffort] = useState("auto");
   const [busy, setBusy] = useState(false);
+  const [streamMetrics, setStreamMetrics] = useState<StreamMetrics>({
+    outputTokens: 0,
+    outputRate: 0,
+    active: false,
+  });
+  const streamMetricsRef = useRef<{
+    startedAt: number;
+    outputTokens: number;
+    reportedOutput?: number;
+  }>({ startedAt: 0, outputTokens: 0 });
   const [streamId, setStreamId] = useState("");
   const [streamConversation, setStreamConversation] = useState("");
   const [approval, setApproval] = useState<StreamEvent>();
@@ -130,6 +146,49 @@ export default function App() {
     entries.find((m) => m.key === (active?.modelKey || modelKey)) ||
     entries.find((m) => m.key === settings.defaultModel) ||
     entries[0];
+  const lastMessage = active
+    ? active.messages[active.messages.length - 1]
+    : undefined;
+  const estimatedContext = useMemo(
+    () => estimateContextTokens(active?.messages || []),
+    [
+      active?.id,
+      active?.messages.length,
+      lastMessage?.id,
+      lastMessage?.usage?.input,
+    ],
+  );
+  const contextMetrics = useMemo(() => {
+    const reportedInput =
+      lastMessage?.role === "assistant" ? lastMessage.usage?.input : undefined;
+    const pendingReply =
+      busy &&
+      streamConversation === active?.id &&
+      !!streamId &&
+      lastMessage?.id === streamId &&
+      lastMessage !== undefined &&
+      !lastMessage.usage;
+    return {
+      tokens:
+        typeof reportedInput === "number" && reportedInput > 0 && !pendingReply
+          ? reportedInput
+          : estimatedContext,
+      estimated:
+        !(typeof reportedInput === "number" && reportedInput > 0) ||
+        pendingReply,
+      limit: selected?.config.context,
+    };
+  }, [
+    active?.id,
+    busy,
+    estimatedContext,
+    lastMessage?.id,
+    lastMessage?.role,
+    lastMessage?.usage?.input,
+    selected?.config.context,
+    streamConversation,
+    streamId,
+  ]);
   const notify = useCallback((text: string) => {
     setToast(text);
     clearTimeout(toastTimer.current);
@@ -515,6 +574,11 @@ export default function App() {
     if (sending.current) return;
     sending.current = true;
     setBusy(true);
+    streamMetricsRef.current = {
+      startedAt: 0,
+      outputTokens: 0,
+    };
+    setStreamMetrics({ outputTokens: 0, outputRate: 0, active: true });
     setAtBottom(true);
     setToolsOpen(false);
     const reply: Message = {
@@ -547,6 +611,15 @@ export default function App() {
     const flush = () => {
       clearTimeout(timer);
       timer = undefined;
+      const metrics = streamMetricsRef.current;
+      if (metrics.startedAt) {
+        const elapsed = Math.max(100, Date.now() - metrics.startedAt) / 1000;
+        setStreamMetrics({
+          outputTokens: metrics.outputTokens,
+          outputRate: metrics.outputTokens / elapsed,
+          active: true,
+        });
+      }
       const snapshot = {
         ...output,
         tools: output.tools ? [...output.tools] : undefined,
@@ -580,9 +653,25 @@ export default function App() {
           switch (event.type) {
             case "text":
               output.content += event.text || "";
+              if (event.text) {
+                if (!streamMetricsRef.current.startedAt)
+                  streamMetricsRef.current.startedAt = Date.now();
+                if (streamMetricsRef.current.reportedOutput === undefined)
+                  streamMetricsRef.current.outputTokens += estimateTextTokens(
+                    event.text,
+                  );
+              }
               break;
             case "reasoning":
               output.reasoning = (output.reasoning || "") + (event.text || "");
+              if (event.text) {
+                if (!streamMetricsRef.current.startedAt)
+                  streamMetricsRef.current.startedAt = Date.now();
+                if (streamMetricsRef.current.reportedOutput === undefined)
+                  streamMetricsRef.current.outputTokens += estimateTextTokens(
+                    event.text,
+                  );
+              }
               break;
             case "tool":
               if (event.call)
@@ -596,6 +685,10 @@ export default function App() {
               break;
             case "usage":
               output.usage = event.usage;
+              if (typeof event.usage?.output === "number") {
+                streamMetricsRef.current.reportedOutput = event.usage.output;
+                streamMetricsRef.current.outputTokens = event.usage.output;
+              }
               break;
             case "images":
               output.generatedImages = [
@@ -622,6 +715,15 @@ export default function App() {
       output.error = (e as Error).message;
     } finally {
       flush();
+      const metrics = streamMetricsRef.current;
+      const elapsed = metrics.startedAt
+        ? Math.max(100, Date.now() - metrics.startedAt) / 1000
+        : 0;
+      setStreamMetrics({
+        outputTokens: metrics.outputTokens,
+        outputRate: elapsed ? metrics.outputTokens / elapsed : 0,
+        active: false,
+      });
       setApproval(undefined);
       setBusy(false);
       setStreamId("");
@@ -1363,6 +1465,11 @@ export default function App() {
           config={selected?.config || {}}
           effort={effort}
           setEffort={changeEffort}
+          contextTokens={contextMetrics.tokens}
+          contextLimit={contextMetrics.limit}
+          contextEstimated={contextMetrics.estimated}
+          outputRate={streamMetrics.outputRate}
+          outputTokens={streamMetrics.outputTokens}
           editing={!!edit}
           onCancelEdit={() => {
             setEdit(undefined);
