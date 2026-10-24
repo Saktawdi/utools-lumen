@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useMemo, useRef, useState } from "react";
 import {
   Check,
   CloudDownload,
@@ -6,6 +6,7 @@ import {
   Loader2,
   Plus,
   Trash2,
+  X,
 } from "lucide-react";
 import { bridge } from "./bridge";
 import type { ImageProvider, Settings } from "./types";
@@ -27,6 +28,7 @@ export default function ImageSettings({
   );
   const [busy, setBusy] = useState(false);
   const [query, setQuery] = useState("");
+  const filterInput = useRef<HTMLInputElement>(null);
   const [manual, setManual] = useState("");
   const [deleting, setDeleting] = useState(false);
   const p =
@@ -39,11 +41,12 @@ export default function ImageSettings({
       ),
     }));
   const all = useMemo(
-    () =>
-      [
-        ...new Set([...(p?.models || []), ...(p?.availableModels || [])]),
-      ].filter((m) => m.toLowerCase().includes(query.toLowerCase())),
-    [p, query],
+    () => [...new Set([...(p?.models || []), ...(p?.availableModels || [])])],
+    [p],
+  );
+  const filtered = useMemo(
+    () => all.filter((m) => m.toLowerCase().includes(query.toLowerCase())),
+    [all, query],
   );
   const add = (protocol: ImageProvider["protocol"]) => {
     const provider: ImageProvider = {
@@ -293,16 +296,33 @@ export default function ImageSettings({
               添加
             </button>
           </div>
-          {all.length > 8 && (
+          <div className="image-model-filter">
             <input
+              ref={filterInput}
               aria-label="筛选生图模型"
               placeholder="筛选模型…"
               value={query}
               onChange={(e) => setQuery(e.target.value)}
             />
-          )}
+            {query && (
+              <IconButton
+                label="清除生图模型筛选"
+                onClick={() => {
+                  setQuery("");
+                  filterInput.current?.focus();
+                }}
+              >
+                <X size={14} />
+              </IconButton>
+            )}
+          </div>
           <div className="image-model-grid">
-            {all.slice(0, 120).map((model) => (
+            {filtered.length === 0 && (
+              <p className="image-model-empty" role="status">
+                {all.length === 0 ? "请先拉取或添加模型" : "没有匹配的模型"}
+              </p>
+            )}
+            {filtered.slice(0, 120).map((model) => (
               <button
                 key={model}
                 className={cx(
@@ -320,7 +340,7 @@ export default function ImageSettings({
               </button>
             ))}
           </div>
-          {all.length > 120 && (
+          {filtered.length > 120 && (
             <p className="muted text-xs">显示前 120 项，请输入关键词筛选。</p>
           )}
           <Field label="默认生图模型">

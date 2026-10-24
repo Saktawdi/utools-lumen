@@ -833,7 +833,16 @@
   margin-bottom: 0;
 }
 .image-provider-list {
+  position: static;
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+  width: 100%;
   margin: 0;
+  padding: 0;
+  border: 0;
+}
+.image-provider-list > .provider-card {
+  width: 100%;
 }
 .image-provider-settings .provider-editor {
   padding-top: 20px;
@@ -867,6 +876,26 @@
 }
 .image-model-add > button {
   flex-shrink: 0;
+}
+.image-model-filter {
+  position: relative;
+}
+.image-model-filter > input {
+  padding-right: 42px;
+}
+.image-model-filter > .icon-button {
+  position: absolute;
+  right: 5px;
+  top: 50%;
+  transform: translateY(-50%);
+}
+.image-model-empty {
+  grid-column: 1 / -1;
+  margin: 0;
+  padding: 16px;
+  text-align: center;
+  color: var(--muted);
+  font-size: 12px;
 }
 .image-model-grid {
   display: grid;

@@ -70,11 +70,11 @@ type Props = {
 const tabs = [
   { id: "providers", label: "供应商与模型", icon: Waypoints },
   { id: "images", label: "生图供应商", icon: ImagePlus },
-  { id: "usage", label: "Token 统计", icon: ChartNoAxesCombined },
   { id: "search", label: "网页搜索", icon: Globe2 },
   { id: "tools", label: "工具扩展", icon: Wrench },
   { id: "appearance", label: "外观与皮肤", icon: Palette },
   { id: "data", label: "数据与偏好", icon: Settings2 },
+  { id: "usage", label: "Token 统计", icon: ChartNoAxesCombined },
 ] as const;
 export default function Settings({
   state,
