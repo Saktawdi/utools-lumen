@@ -25,6 +25,7 @@ import {
 } from "lucide-react";
 import { bridge } from "./bridge";
 import Appearance from "./Appearance";
+import ReasoningLevelsInput from "./ReasoningLevelsInput";
 import { newProvider } from "./defaults";
 import { matchModel } from "./model-catalog";
 import { exportBackup, importBackup, parseCustomTool } from "./state-data";
@@ -782,18 +783,14 @@ function ModelManager({
             ))}
           </div>
           <div className="form-grid">
-            <Field label="支持的推理档位">
-              <input
-                value={config.levels?.join(", ") || ""}
-                placeholder="low, medium, high"
-                onChange={(e) =>
-                  patchConfig(editing, {
-                    levels: e.target.value
-                      .split(",")
-                      .map((x) => x.trim())
-                      .filter(Boolean),
-                  })
-                }
+            <Field
+              label="支持的推理档位"
+              hint="逗号、分号或回车分隔，支持中文标点。"
+            >
+              <ReasoningLevelsInput
+                key={`${p.id}:${editing}`}
+                value={config.levels}
+                onChange={(levels) => patchConfig(editing, { levels })}
               />
             </Field>
             <Field label="推理参数形式">

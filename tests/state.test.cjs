@@ -149,6 +149,65 @@ test("provider JSON supports legacy apiKey, deduplicates models and merges witho
   assert.deepEqual(restored.state.conversations, original.conversations);
 });
 
+test("reasoning levels repair legacy combined values and preserve individual levels through JSON backup", () => {
+  const original = workspace();
+  original.settings.providers[0].modelConfigs.m = {
+    reasoning: true,
+    reasoningMode: "effort",
+    source: "自定义",
+    levels: [
+      "low，high",
+      "medium;max；xhigh",
+      " high ",
+      "custom-level\r\nlow",
+      "budget:8192",
+      "",
+      "custom level",
+    ],
+  };
+  const expected = [
+    "low",
+    "high",
+    "medium",
+    "max",
+    "xhigh",
+    "custom-level",
+    "budget:8192",
+    "custom level",
+  ];
+  const snapshot = structuredClone(original);
+  const loaded = mergeState(original);
+  assert.deepEqual(
+    loaded.settings.providers[0].modelConfigs.m.levels,
+    expected,
+  );
+  assert.equal(
+    loaded.settings.providers[0].modelConfigs.m.reasoningMode,
+    "effort",
+  );
+  assert.equal(loaded.settings.providers[0].modelConfigs.m.source, "自定义");
+  assert.deepEqual(original, snapshot);
+  const restored = importBackup(
+    JSON.parse(JSON.stringify(exportBackup(original, false))),
+    workspace(),
+  ).state;
+  assert.deepEqual(
+    restored.settings.providers[0].modelConfigs.m.levels,
+    expected,
+  );
+  assert.deepEqual(restored.settings.providers[0].keys, ["private-key"]);
+  const cleared = importBackup(
+    [
+      {
+        ...original.settings.providers[0],
+        modelConfigs: { m: { levels: [" ,，;；、\r\n "] } },
+      },
+    ],
+    original,
+  ).state;
+  assert.deepEqual(cleared.settings.providers[0].modelConfigs.m.levels, []);
+});
+
 test("image references in backups validate metadata without embedding local image files", () => {
   const original = workspace();
   const raw = exportBackup(original, false);

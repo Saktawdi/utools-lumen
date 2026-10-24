@@ -1,4 +1,5 @@
 import { freshState, newProvider } from "./defaults";
+import { parseReasoningLevels } from "./reasoning-levels";
 import type {
   AppState,
   Conversation,
@@ -126,7 +127,7 @@ function modelConfigs(value: unknown): Record<string, ModelConfig> {
         if (typeof raw[key] === "number") next[key] = raw[key];
       }
       if (raw.levels !== undefined)
-        next.levels = strings(raw.levels, "推理档位");
+        next.levels = parseReasoningLevels(strings(raw.levels, "推理档位"));
       for (const key of ["source", "matchedId"] as const)
         if (typeof raw[key] === "string") next[key] = raw[key];
       if (["effort", "toggle", "budget"].includes(String(raw.reasoningMode)))
@@ -235,6 +236,20 @@ export function mergeState(raw: AppState | null): AppState {
   const settings: Settings = {
     ...initial.settings,
     ...raw.settings,
+    providers: (raw.settings?.providers || []).map((provider) => ({
+      ...provider,
+      modelConfigs: Object.fromEntries(
+        Object.entries(provider.modelConfigs || {}).map(([id, config]) => [
+          id,
+          {
+            ...config,
+            ...(Array.isArray(config.levels)
+              ? { levels: parseReasoningLevels(config.levels) }
+              : {}),
+          },
+        ]),
+      ),
+    })),
     toolPermission:
       raw.settings?.toolPermission === "always_allow"
         ? "always_allow"
