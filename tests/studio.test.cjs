@@ -7,6 +7,7 @@ const http = require("node:http");
 const { Core } = require("../runtime/core.cjs");
 const { normalizeUsage } = require("../runtime/usage.cjs");
 const { createCollector } = require("../runtime/adapters.cjs");
+const { explainImageError } = require("../runtime/images.cjs");
 const { builtins } = require("../runtime/tools.cjs");
 const png =
   "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+jf9kAAAAASUVORK5CYII=";
@@ -261,6 +262,21 @@ test("image errors are actionable, redact all authentication values and do not i
       references: [{ data: "data:image/svg+xml;base64,abc" }],
     }),
     /参考图/,
+  );
+});
+
+test("image endpoint mismatch explains gateway routing instead of denying the model type", () => {
+  const message = explainImageError(
+    new Error(
+      'HTTP 400 · images endpoint requires an image model, got "sdxl-lightning"',
+    ),
+    "sdxl-lightning",
+  );
+  assert.match(message, /没有把「sdxl-lightning」映射到 Images 生图路由/);
+  assert.match(message, /扩散生图模型/);
+  assert.equal(
+    explainImageError(new Error("HTTP 400 · bad request"), "sdxl-lightning"),
+    "HTTP 400 · bad request",
   );
 });
 

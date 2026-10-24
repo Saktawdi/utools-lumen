@@ -47,6 +47,18 @@ function imageBytes(data) {
   if (buffer.length > MAX_IMAGE) throw new Error("图片超过 16 MB");
   return { buffer, mime: mimeOf(buffer) };
 }
+
+function explainImageError(error, model) {
+  const message = String(error?.message || error);
+  if (!/images endpoint requires an image model/i.test(message)) return message;
+  const id = String(model || "当前模型")
+    .replace(/\s+/g, " ")
+    .trim();
+  return (
+    `${message.split(" · ")[0]} · 供应商没有把「${id}」映射到 Images 生图路由。` +
+    "它本身可能是扩散生图模型，但当前网关仍会拒绝这个模型；请在供应商后台启用 image-generation 映射，或改用该接口已登记的生图模型。"
+  );
+}
 function multipart(fields, references, field = "image[]") {
   const boundary = "lumen-" + crypto.randomUUID();
   const chunks = [];
@@ -437,7 +449,7 @@ class ImageStudio {
       status = controller.signal.aborted ? "cancelled" : "error";
       let message = controller.signal.aborted
         ? "已停止生成"
-        : String(error.message || error);
+        : explainImageError(error, args.model);
       for (const key of [...(p.keys || []), ...Object.values(p.headers || {})])
         if (key) message = message.split(key).join("[密钥已隐藏]");
       job.error = message;
@@ -462,4 +474,10 @@ class ImageStudio {
     return structuredClone(job);
   }
 }
-module.exports = { ImageStudio, imageBytes, multipart, validateRequest };
+module.exports = {
+  ImageStudio,
+  imageBytes,
+  multipart,
+  validateRequest,
+  explainImageError,
+};
