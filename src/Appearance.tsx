@@ -243,6 +243,14 @@ export default function Appearance({
         }}
       />
 
+      <div className="preference-row">
+        <strong>紧凑布局</strong>
+        <Toggle
+          label="紧凑布局"
+          checked={settings.compact}
+          onChange={(compact) => update({ compact })}
+        />
+      </div>
       <div className="appearance-row preview-heading">
         <span className="muted text-xs">即时预览</span>
         <div className="segmented small" role="group" aria-label="皮肤预览模式">
@@ -526,14 +534,6 @@ export default function Appearance({
         </div>
       )}
       <div className="section-divider" />
-      <div className="preference-row">
-        <strong>紧凑布局</strong>
-        <Toggle
-          label="紧凑布局"
-          checked={settings.compact}
-          onChange={(compact) => update({ compact })}
-        />
-      </div>
       <div className="preference-row">
         <strong>减少动态效果</strong>
         <Toggle

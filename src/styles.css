@@ -1469,8 +1469,8 @@ kbd {
 }
 .message {
   display: flex;
-  gap: 13px;
-  margin: 25px 0 35px;
+  gap: var(--chat-message-gap, 13px);
+  margin: var(--chat-message-margin, 25px 0 35px);
   animation: message-in 0.26s var(--ease);
   overflow-wrap: anywhere;
   align-items: flex-start;
@@ -1524,7 +1524,7 @@ kbd {
 .message-bubble {
   border: 1px solid transparent;
   border-radius: var(--bubble-radius, 18px);
-  padding: 13px 16px;
+  padding: var(--chat-bubble-padding, 13px 16px);
   background: color-mix(
     in srgb,
     var(--agent-bubble, var(--surface)) var(--bubble-opacity, 96%),
@@ -1570,10 +1570,10 @@ kbd {
 [data-bubbles="minimal"] .message-bubble {
   background: none;
   border-color: transparent;
-  padding: 4px 0;
+  padding: var(--chat-minimal-padding, 4px 0);
 }
 [data-bubbles="minimal"] .message.user .message-bubble {
-  padding: 10px 14px;
+  padding: var(--chat-minimal-user-padding, 10px 14px);
   background: color-mix(
     in srgb,
     var(--user-bubble, var(--surface-2)) var(--bubble-opacity, 96%),
@@ -1586,7 +1586,7 @@ kbd {
   gap: 8px;
   font-size: 11px;
   font-weight: 600;
-  margin: 4px 0 13px;
+  margin: var(--chat-author-margin, 4px 0 13px);
 }
 .message-author > span {
   color: var(--muted);
@@ -1602,7 +1602,7 @@ kbd {
 }
 .user-text {
   font-size: 14px;
-  line-height: 1.85;
+  line-height: var(--chat-line-height, 1.85);
   white-space: pre-wrap;
   padding: 0;
   display: inline-block;
@@ -1613,7 +1613,7 @@ kbd {
 }
 .markdown {
   font-size: 14px;
-  line-height: 1.9;
+  line-height: var(--chat-line-height, 1.9);
   color: var(--text);
   overflow-wrap: anywhere;
 }
@@ -1624,7 +1624,7 @@ kbd {
   margin-bottom: 0;
 }
 .markdown p {
-  margin: 10px 0 16px;
+  margin: var(--chat-paragraph-margin, 10px 0 16px);
 }
 .markdown h1 {
   font-size: 23px;
@@ -1650,7 +1650,7 @@ kbd {
 .markdown ul,
 .markdown ol {
   padding-left: 24px;
-  margin: 12px 0 18px;
+  margin: var(--chat-list-margin, 12px 0 18px);
 }
 .markdown li {
   padding-left: 2px;
@@ -1745,7 +1745,7 @@ kbd {
   display: flex;
   align-items: center;
   gap: 2px;
-  margin-top: 10px;
+  margin-top: var(--chat-actions-margin, 10px);
   color: var(--muted);
   opacity: 0;
   transition: opacity 0.2s;
@@ -2014,15 +2014,17 @@ kbd {
   max-height: 150px;
   overflow: auto;
 }
-.compact .message {
-  margin-top: 15px;
-  margin-bottom: 20px;
-}
-.compact .message-author {
-  margin-bottom: 8px;
-}
-.compact .markdown {
-  line-height: 1.75;
+.app.compact {
+  --chat-message-margin: 12px 0 18px;
+  --chat-message-gap: 9px;
+  --chat-bubble-padding: 8px 12px;
+  --chat-minimal-padding: 2px 0;
+  --chat-minimal-user-padding: 7px 11px;
+  --chat-author-margin: 2px 0 7px;
+  --chat-line-height: 1.65;
+  --chat-paragraph-margin: 6px 0 10px;
+  --chat-list-margin: 8px 0 12px;
+  --chat-actions-margin: 5px;
 }
 .modal-backdrop {
   position: fixed;
@@ -2845,23 +2847,29 @@ kbd {
   --border: #343c36;
 }
 .appearance-preview .message {
-  margin: 0 0 15px;
-  gap: 9px;
+  margin: var(--chat-message-margin, 0 0 15px);
+  gap: var(--chat-message-gap, 9px);
   animation: none;
 }
 .appearance-preview .message:last-child {
   margin-bottom: 0;
 }
 .appearance-preview .message-bubble {
-  padding: 9px 12px;
+  padding: var(--chat-bubble-padding, 9px 12px);
 }
 .appearance-preview .message-author {
-  margin: 0 0 4px;
+  margin: var(--chat-author-margin, 0 0 4px);
 }
 .appearance-preview .user-text,
 .appearance-preview .markdown {
   font-size: 12px;
-  line-height: 1.7;
+  line-height: var(--chat-line-height, 1.7);
+}
+.compact .appearance-preview {
+  --chat-message-margin: 0 0 8px;
+  --chat-message-gap: 7px;
+  --chat-bubble-padding: 6px 10px;
+  --chat-author-margin: 0 0 3px;
 }
 .customize-button {
   margin-top: 14px;
@@ -2995,7 +3003,7 @@ kbd {
     max-width: calc(100% - 34px);
   }
   .message-bubble {
-    padding: 11px 13px;
+    padding: var(--chat-bubble-padding, 11px 13px);
   }
 }
 .preference-row {
