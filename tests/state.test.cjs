@@ -60,6 +60,62 @@ function workspace() {
     ],
   });
 }
+test("translation languages migrate legacy custom defaults and persist through JSON and backups", () => {
+  const legacy = mergeState({
+    settings: { translationLanguage: "  葡萄牙语  " },
+  });
+  assert.equal(legacy.settings.translationLanguage, "葡萄牙语");
+  assert.ok(legacy.settings.translationLanguages.includes("葡萄牙语"));
+  const original = workspace();
+  original.settings.translationLanguages = ["ja", "葡萄牙语"];
+  original.settings.translationLanguage = "葡萄牙语";
+  for (const restored of [
+    mergeState(JSON.parse(JSON.stringify(original))),
+    importBackup(exportBackup(original, false), workspace()).state,
+  ]) {
+    assert.deepEqual(restored.settings.translationLanguages, [
+      "ja",
+      "葡萄牙语",
+    ]);
+    assert.equal(restored.settings.translationLanguage, "葡萄牙语");
+  }
+  const oldBackup = importBackup(
+    { providers: [], settings: { translationLanguage: "乌克兰语" } },
+    workspace(),
+  ).state;
+  assert.ok(oldBackup.settings.translationLanguages.includes("乌克兰语"));
+  assert.equal(oldBackup.settings.translationLanguage, "乌克兰语");
+  const listOnly = importBackup(
+    { providers: [], settings: { translationLanguages: ["EN", "英语", "ja"] } },
+    workspace(),
+  ).state;
+  assert.deepEqual(listOnly.settings.translationLanguages, ["en", "ja"]);
+  assert.equal(listOnly.settings.translationLanguage, "en");
+});
+test("invalid translation language imports fail atomically and corrupt local lists recover", () => {
+  const original = workspace(),
+    snapshot = structuredClone(original);
+  for (const list of [[], "en", [3], [""], ["x".repeat(81)]]) {
+    assert.throws(() =>
+      importBackup(
+        { providers: [], settings: { translationLanguages: list } },
+        original,
+      ),
+    );
+    const recovered = mergeState({
+      settings: { translationLanguages: list, translationLanguage: "ja" },
+    });
+    assert.ok(recovered.settings.translationLanguages.includes("ja"));
+  }
+  for (const translationLanguage of [3, "", "x".repeat(81)])
+    assert.throws(() =>
+      importBackup(
+        { providers: [], settings: { translationLanguage } },
+        original,
+      ),
+    );
+  assert.deepEqual(original, snapshot);
+});
 test("keyless backups strip credentials including unknown provider fields; restore preserves existing keys", () => {
   const original = workspace();
   const backup = exportBackup(original, false);

@@ -1,6 +1,10 @@
 import { freshState, newProvider } from "./defaults";
 import { parseReasoningLevels } from "./reasoning-levels";
 import {
+  normalizeTranslationSettings,
+  parseTranslationLanguages,
+} from "./quick-commands";
+import {
   isConversationColor,
   parseConversationGroup,
 } from "./conversation-data";
@@ -240,6 +244,10 @@ export function mergeState(raw: AppState | null): AppState {
   const settings: Settings = {
     ...initial.settings,
     ...raw.settings,
+    ...normalizeTranslationSettings(
+      raw.settings?.translationLanguages,
+      raw.settings?.translationLanguage,
+    ),
     providers: (raw.settings?.providers || []).map((provider) => ({
       ...provider,
       modelConfigs: Object.fromEntries(
@@ -364,6 +372,28 @@ export function importBackup(
     providers.set(p.id, p);
   }
   const patch: Partial<Settings> = {};
+  if (
+    imported.translationLanguage !== undefined &&
+    (typeof imported.translationLanguage !== "string" ||
+      !imported.translationLanguage.trim() ||
+      imported.translationLanguage.trim().length > 80)
+  )
+    throw new Error("默认翻译语言需要为 1–80 字的语言代码或名称");
+  if (
+    imported.translationLanguages !== undefined ||
+    imported.translationLanguage !== undefined
+  ) {
+    const list =
+      imported.translationLanguages === undefined
+        ? current.settings.translationLanguages
+        : parseTranslationLanguages(imported.translationLanguages);
+    const selected =
+      imported.translationLanguage ??
+      (list.includes(current.settings.translationLanguage)
+        ? current.settings.translationLanguage
+        : list[0]);
+    Object.assign(patch, normalizeTranslationSettings(list, selected));
+  }
   if (imported.imageProviders !== undefined) {
     if (!Array.isArray(imported.imageProviders))
       throw new Error("生图供应商需要为数组");
@@ -407,7 +437,6 @@ export function importBackup(
     "systemPrompt",
     "defaultModel",
     "defaultImageModel",
-    "translationLanguage",
   ] as const)
     if (typeof imported[key] === "string") patch[key] = imported[key];
   if (["enter", "ctrl-enter"].includes(String(imported.sendKey)))

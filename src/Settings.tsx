@@ -29,6 +29,7 @@ import { bridge } from "./bridge";
 import { appInfo } from "./app-info";
 import Appearance from "./Appearance";
 import ReasoningLevelsInput from "./ReasoningLevelsInput";
+import TranslationLanguages from "./TranslationLanguages";
 import { newProvider } from "./defaults";
 import { matchModel } from "./model-catalog";
 import { exportBackup, importBackup, parseCustomTool } from "./state-data";
@@ -1223,7 +1224,11 @@ function DataSettings({
 }: {
   state: AppState;
   onChange: (s: AppState | ((current: AppState) => AppState)) => void;
-  update: (p: Partial<SettingsType>) => void;
+  update: (
+    p:
+      | Partial<SettingsType>
+      | ((current: SettingsType) => Partial<SettingsType>),
+  ) => void;
   run: (id: string, fn: () => Promise<void>) => Promise<void>;
   busy: string;
   notify: (t: string) => void;
@@ -1262,25 +1267,11 @@ function DataSettings({
             ))}
         </select>
       </Field>
-      <Field label="翻译目标语言">
-        <input
-          aria-label="翻译目标语言"
-          list="translation-languages"
-          value={settings.translationLanguage}
-          onChange={(e) => update({ translationLanguage: e.target.value })}
-          placeholder="cn"
-        />
-        <datalist id="translation-languages">
-          <option value="cn">简体中文</option>
-          <option value="en">英语</option>
-          <option value="ja">日语</option>
-          <option value="ko">韩语</option>
-          <option value="zh-tw">繁體中文</option>
-          <option value="fr">法语</option>
-          <option value="de">德语</option>
-          <option value="es">西班牙语</option>
-        </datalist>
-      </Field>
+      <TranslationLanguages
+        settings={settings}
+        update={update}
+        notify={notify}
+      />
       <div className="section-divider" />
       <h3>备份与恢复</h3>
       <p className="sub-description">

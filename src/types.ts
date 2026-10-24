@@ -227,6 +227,7 @@ export type Settings = {
   customTools: CustomTool[];
   systemPrompt: string;
   translationLanguage: string;
+  translationLanguages: string[];
   defaultModel?: string;
   sendKey: "enter" | "ctrl-enter";
   compact: boolean;

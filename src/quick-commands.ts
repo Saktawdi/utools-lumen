@@ -11,6 +11,97 @@ const languages: Record<string, string> = {
   de: "德语",
   es: "西班牙语",
 };
+export const defaultTranslationLanguages = [
+  "cn",
+  "en",
+  "ja",
+  "ko",
+  "zh-tw",
+  "fr",
+  "de",
+  "es",
+];
+export function normalizeLanguage(value: string) {
+  const trimmed = value.trim();
+  const name = languages[trimmed.toLowerCase()] || trimmed;
+  return (
+    defaultTranslationLanguages.find((code) => languages[code] === name) ||
+    (/^[a-z]{2,3}(?:[-_][a-z0-9]{2,8})*$/i.test(trimmed)
+      ? trimmed.toLowerCase().replaceAll("_", "-")
+      : trimmed)
+  );
+}
+export function parseTranslationLanguages(value: unknown): string[] {
+  if (
+    !Array.isArray(value) ||
+    !value.length ||
+    value.length > 100 ||
+    value.some(
+      (item) =>
+        typeof item !== "string" || !item.trim() || item.trim().length > 80,
+    )
+  )
+    throw new Error(
+      "翻译语言列表需要包含 1–100 个语言代码或名称，每项最多 80 字",
+    );
+  return [...new Set(value.map(normalizeLanguage))];
+}
+type TranslationSettings = {
+  translationLanguage: string;
+  translationLanguages: string[];
+};
+export function normalizeTranslationSettings(
+  list: unknown,
+  selected: unknown,
+): TranslationSettings {
+  let translationLanguages: string[];
+  try {
+    translationLanguages = parseTranslationLanguages(list);
+  } catch {
+    translationLanguages = [...defaultTranslationLanguages];
+  }
+  const language =
+    typeof selected === "string" &&
+    selected.trim() &&
+    selected.trim().length <= 80
+      ? normalizeLanguage(selected)
+      : translationLanguages[0];
+  // Preserve custom defaults saved before the language manager existed.
+  if (!translationLanguages.includes(language))
+    translationLanguages = [...translationLanguages.slice(0, 99), language];
+  return { translationLanguages, translationLanguage: language };
+}
+export function addTranslationLanguage(
+  settings: TranslationSettings,
+  value: string,
+): TranslationSettings {
+  const [language] = parseTranslationLanguages([value]);
+  if (settings.translationLanguages.includes(language))
+    throw new Error("该语言已在列表中");
+  return {
+    translationLanguage: settings.translationLanguage,
+    translationLanguages: parseTranslationLanguages([
+      ...settings.translationLanguages,
+      language,
+    ]),
+  };
+}
+export function removeTranslationLanguage(
+  settings: TranslationSettings,
+  language: string,
+): TranslationSettings {
+  const translationLanguages = settings.translationLanguages.filter(
+    (item) => item !== language,
+  );
+  if (!translationLanguages.length) return settings;
+  return {
+    translationLanguages,
+    translationLanguage:
+      settings.translationLanguage === language
+        ? translationLanguages[0]
+        : settings.translationLanguage,
+  };
+}
 export function languageName(value: string = "cn") {
   return languages[value.trim().toLowerCase()] || value.trim() || "简体中文";
 }

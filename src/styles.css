@@ -370,6 +370,54 @@ kbd {
   grid-template-columns: 1fr 1fr;
   gap: 0 15px;
 }
+.translation-languages {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 7px;
+}
+.translation-language {
+  display: flex;
+  align-items: center;
+  max-width: 100%;
+  border: 1px solid var(--border);
+  border-radius: 9px;
+  background: var(--surface);
+}
+.translation-language.selected {
+  border-color: var(--accent);
+  background: var(--soft-accent);
+}
+.translation-language label {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  padding: 7px 3px 7px 9px;
+  cursor: pointer;
+}
+.translation-language label > span:first-of-type {
+  overflow-wrap: anywhere;
+}
+.translation-language input[type="radio"] {
+  width: 13px;
+  height: 13px;
+  min-height: 0;
+  margin: 0;
+  padding: 0;
+  flex-shrink: 0;
+  accent-color: var(--accent);
+}
+.language-default {
+  font-size: 10px;
+  color: var(--accent);
+  white-space: nowrap;
+}
+.translation-language .icon-button {
+  width: 26px;
+  height: 26px;
+  flex-shrink: 0;
+  margin-right: 2px;
+}
 .form-grid .field {
   min-width: 0;
 }
