@@ -4,7 +4,7 @@
 
 Lumen 是一个轻量的 BYOK AI 工作空间：连接自己的供应商和模型，粘贴图片开始对话，让 Agent 搜索、计算或生成图片，再把作品留在本地画廊。安装后的插件即开即用，无需常驻开发服务。
 
-**0.1.0 Beta** · [版本与下载](https://github.com/Saktawdi/utools-lumen/releases) · [问题反馈](https://github.com/Saktawdi/utools-lumen/issues) · [MIT License](LICENSE)
+**0.2.4 Beta** · uTools 插件市场审核中 · [版本与下载](https://github.com/Saktawdi/utools-lumen/releases) · [问题反馈](https://github.com/Saktawdi/utools-lumen/issues) · [MIT License](LICENSE)
 
 ![自定义背景下的多模型聊天，Agent 调用生图工具并展示结果](assets/screenshots/agent-chat.png)
 
@@ -94,9 +94,9 @@ Agent 通过 `list_tools` 发现已注册能力，内置时间、计算、网页
 
 需要 **uTools 8**。在「uTools 开发者工具」中新建插件项目，选择「导入源码工程」，导入构建目录的 `plugin.json`，再「接入开发」并运行。
 
-运行 `npm run package` 可生成 `release/lumen-0.1.0-local.zip`，解压后的 `Lumen/plugin.json` 是导入入口。该构建包不需要 Node 环境，也不包含个人配置。发行文件见 [GitHub Releases](https://github.com/Saktawdi/utools-lumen/releases)。
+运行 `npm run package` 可生成 `release/lumen-0.2.4-local.zip`，解压后的 `Lumen/plugin.json` 是导入入口。该构建包不需要 Node 环境，也不包含个人配置。发行文件见 [GitHub Releases](https://github.com/Saktawdi/utools-lumen/releases)。
 
-如需 `.upxs`，请在 uTools 开发者工具中使用「构建离线安装包」。当前为 Beta 版本，尚未上架 uTools 插件市场；开发模式下的超级面板等入口受宿主限制，完整离线安装流程仍需实机验收。
+如需 `.upxs`，请在 uTools 开发者工具中使用「构建离线安装包」。当前为 **0.2.4 Beta**，uTools 插件市场仍在审核，审核通过前可从 GitHub 下载本地导入包。开发模式下的超级面板等入口受宿主限制。
 
 修改 preload 后需要完全退出插件再打开，普通页面重载不能重新加载 Node 桥接。
 

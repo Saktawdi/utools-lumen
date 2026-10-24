@@ -2,7 +2,7 @@
   "pluginName": "Lumen · 流明",
   "name": "lumen-local-chat",
   "description": "轻量、精致的 BYOK Agent 聊天空间。图片、模型、工具与灵感，自由连接。",
-  "version": "0.1.0",
+  "version": "0.2.4",
   "author": "Saktawdi",
   "main": "index.html",
   "preload": "preload.js",

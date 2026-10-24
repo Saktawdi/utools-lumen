@@ -1,4 +1,5 @@
 const { request, assertOk, sse } = require("./transport.cjs");
+const { version } = require("../public/plugin.json");
 const cursors = new Map();
 async function withKeys(id, keys, operation) {
   const pool = [...new Set((keys || []).map((x) => x.trim()).filter(Boolean))];
@@ -62,7 +63,7 @@ async function webSearch(config, query, signal) {
       : {};
     let data;
     if (config.engine === "anysearch") {
-      headers["X-Anysearch-Client"] = "lumen/0.1.0";
+      headers["X-Anysearch-Client"] = `lumen/${version}`;
       const init = await rpc(
         config.endpoint,
         headers,
@@ -73,7 +74,7 @@ async function webSearch(config, query, signal) {
           params: {
             protocolVersion: "2025-03-26",
             capabilities: {},
-            clientInfo: { name: "lumen-utools", version: "0.1.0" },
+            clientInfo: { name: "lumen-utools", version },
           },
         },
         signal,
