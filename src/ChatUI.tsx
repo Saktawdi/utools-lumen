@@ -10,6 +10,7 @@ import {
   Code2,
   Copy,
   FileText,
+  Gauge,
   Globe2,
   ImagePlus,
   Loader2,
@@ -26,6 +27,8 @@ import {
   X,
 } from "lucide-react";
 import { bridge } from "./bridge";
+import { GeneratedImages } from "./ImageAssets";
+import { Avatar } from "./Avatar";
 import type {
   Attachment,
   Message,
@@ -36,6 +39,7 @@ import type {
   ToolPermissionMode,
 } from "./types";
 import { IconButton, Logo, Toggle, cx, usePopoverDismiss } from "./ui";
+import { formatTokenCount } from "./token-metrics";
 export function Welcome({
   onPrompt,
   onAttach,
@@ -169,6 +173,8 @@ export const MessageView = memo(function MessageView({
   onEdit,
   onImage,
   notify,
+  userAvatar,
+  agentAvatar,
 }: {
   message: Message;
   streaming: boolean;
@@ -176,6 +182,8 @@ export const MessageView = memo(function MessageView({
   onEdit: (messageId: string) => void;
   onImage: (attachment: Attachment) => void;
   notify: (t: string) => void;
+  userAvatar?: string;
+  agentAvatar?: string;
 }) {
   const [copied, setCopied] = useState(false);
   return (
@@ -184,113 +192,121 @@ export const MessageView = memo(function MessageView({
       aria-label={m.role === "user" ? "你的消息" : "Lumen 的回答"}
     >
       <div className="message-avatar">
-        {m.role === "assistant" ? <Logo small /> : <span>你</span>}
+        <Avatar
+          role={m.role}
+          src={m.role === "user" ? userAvatar : agentAvatar}
+        />
       </div>
       <div className="message-body">
-        {m.role === "assistant" && (
-          <div className="message-author">
-            Lumen <span>{m.model}</span>
-            {streaming && <i className="status-dot online breathing" />}
-          </div>
-        )}
-        {m.attachments?.length ? (
-          <div className="message-attachments">
-            {m.attachments.map((a) =>
-              a.type === "image" ? (
-                <button
-                  className="message-image"
-                  key={a.id}
-                  onClick={() => onImage(a)}
-                >
-                  <img src={a.data} alt={a.name} />
-                </button>
-              ) : (
-                <div className="file-attachment" key={a.id}>
-                  <FileText size={19} />
-                  <span>
-                    {a.name}
-                    <small>{formatBytes(a.size)}</small>
-                  </span>
-                </div>
-              ),
-            )}
-          </div>
-        ) : null}
-        {m.reasoning && (
-          <details className="reasoning">
-            <summary>
-              <Sparkles size={14} />
-              <span>{streaming ? "正在思考" : "思考过程"}</span>
-              <ChevronDown size={13} />
-            </summary>
-            <div>{m.reasoning}</div>
-          </details>
-        )}
-        {m.tools?.map((call) => (
-          <details className={cx("tool-call", call.status)} key={call.id}>
-            <summary>
-              {call.status === "running" ? (
-                <Loader2 size={13} className="spin" />
-              ) : call.status === "error" ? (
-                <AlertCircle size={13} />
-              ) : (
-                <Check size={13} />
-              )}
-              <code>{call.name}</code>
-              <span>
-                {call.status === "running"
-                  ? "执行中"
-                  : call.status === "error"
-                    ? "未完成"
-                    : "已完成"}
-              </span>
-              {call.duration !== undefined && (
-                <small>{(call.duration / 1000).toFixed(1)}s</small>
-              )}
-              <ChevronDown size={12} />
-            </summary>
-            <div>
-              <strong>参数</strong>
-              <pre>{prettyJson(call.arguments)}</pre>
-              {call.result !== undefined && (
-                <>
-                  <strong>结果</strong>
-                  <pre>
-                    {typeof call.result === "string"
-                      ? call.result
-                      : JSON.stringify(call.result, null, 2)}
-                  </pre>
-                </>
+        <div className="message-bubble">
+          {m.role === "assistant" && (
+            <div className="message-author">
+              Lumen <span>{m.model}</span>
+              {streaming && <i className="status-dot online breathing" />}
+            </div>
+          )}
+          {m.attachments?.length ? (
+            <div className="message-attachments">
+              {m.attachments.map((a) =>
+                a.type === "image" ? (
+                  <button
+                    className="message-image"
+                    key={a.id}
+                    onClick={() => onImage(a)}
+                  >
+                    <img src={a.data} alt={a.name} />
+                  </button>
+                ) : (
+                  <div className="file-attachment" key={a.id}>
+                    <FileText size={19} />
+                    <span>
+                      {a.name}
+                      <small>{formatBytes(a.size)}</small>
+                    </span>
+                  </div>
+                ),
               )}
             </div>
-          </details>
-        ))}
-        {m.content && (
-          <div className="message-content">
-            {m.role === "user" ? (
-              <div className="user-text">{m.content}</div>
-            ) : (
-              <Markdown content={m.content} />
-            )}
-          </div>
-        )}
-        {streaming && !m.content && !m.reasoning && !m.tools?.length && (
-          <div className="thinking-dots" aria-label="正在生成">
-            <i />
-            <i />
-            <i />
-          </div>
-        )}
-        {m.error && (
-          <div className="message-error">
-            <AlertCircle size={16} />
-            <div>
-              <strong>这次请求没有完成</strong>
-              <p>{m.error}</p>
+          ) : null}
+          {m.reasoning && (
+            <details className="reasoning">
+              <summary>
+                <Sparkles size={14} />
+                <span>{streaming ? "正在思考" : "思考过程"}</span>
+                <ChevronDown size={13} />
+              </summary>
+              <div>{m.reasoning}</div>
+            </details>
+          )}
+          {m.tools?.map((call) => (
+            <details className={cx("tool-call", call.status)} key={call.id}>
+              <summary>
+                {call.status === "running" ? (
+                  <Loader2 size={13} className="spin" />
+                ) : call.status === "error" ? (
+                  <AlertCircle size={13} />
+                ) : (
+                  <Check size={13} />
+                )}
+                <code>{call.name}</code>
+                <span>
+                  {call.status === "running"
+                    ? "执行中"
+                    : call.status === "error"
+                      ? "未完成"
+                      : "已完成"}
+                </span>
+                {call.duration !== undefined && (
+                  <small>{(call.duration / 1000).toFixed(1)}s</small>
+                )}
+                <ChevronDown size={12} />
+              </summary>
+              <div>
+                <strong>参数</strong>
+                <pre>{prettyJson(call.arguments)}</pre>
+                {call.result !== undefined && (
+                  <>
+                    <strong>结果</strong>
+                    <pre>
+                      {typeof call.result === "string"
+                        ? call.result
+                        : JSON.stringify(call.result, null, 2)}
+                    </pre>
+                  </>
+                )}
+              </div>
+            </details>
+          ))}
+          {!!m.generatedImages?.length && (
+            <GeneratedImages assets={m.generatedImages} notify={notify} />
+          )}
+          {m.content && (
+            <div className="message-content">
+              {m.role === "user" ? (
+                <div className="user-text">{m.content}</div>
+              ) : (
+                <Markdown content={m.content} />
+              )}
             </div>
-          </div>
-        )}
-        {m.interrupted && <span className="interrupted">已停止生成</span>}
+          )}
+          {streaming && !m.content && !m.reasoning && !m.tools?.length && (
+            <div className="thinking-dots" aria-label="正在生成">
+              <i />
+              <i />
+              <i />
+            </div>
+          )}
+          {m.error && (
+            <div className="message-error">
+              <AlertCircle size={16} />
+              <div>
+                <strong>这次请求没有完成</strong>
+                <p>{m.error}</p>
+              </div>
+            </div>
+          )}
+          {m.interrupted && <span className="interrupted">已停止生成</span>}
+        </div>
         {!streaming && (
           <div className="message-actions">
             <IconButton
@@ -473,6 +489,11 @@ export function Composer({
   config,
   effort,
   setEffort,
+  contextTokens,
+  contextLimit,
+  contextEstimated,
+  outputRate,
+  outputTokens,
   children,
   editing,
   onCancelEdit,
@@ -497,6 +518,11 @@ export function Composer({
   config: ModelConfig;
   effort: string;
   setEffort: (v: string) => void;
+  contextTokens: number;
+  contextLimit?: number;
+  contextEstimated: boolean;
+  outputRate: number;
+  outputTokens: number;
   children?: ReactNode;
   editing: boolean;
   onCancelEdit: () => void;
@@ -768,6 +794,77 @@ export function Composer({
               <ArrowUp size={19} />
             </button>
           )}
+        </div>
+      </div>
+      <div className="composer-metrics" aria-label="会话实时统计">
+        <div
+          className="composer-metric context-metric"
+          title={
+            contextLimit
+              ? `${contextEstimated ? "估算" : "已上报"}上下文：${contextTokens.toLocaleString()} / ${contextLimit.toLocaleString()} tokens`
+              : `${contextEstimated ? "估算" : "已上报"}上下文：${contextTokens.toLocaleString()} tokens；当前模型未提供上下文上限`
+          }
+        >
+          <svg
+            className={cx(
+              "context-meter",
+              contextLimit && contextTokens >= contextLimit * 0.9
+                ? "near-limit"
+                : undefined,
+            )}
+            viewBox="0 0 16 16"
+            role="img"
+            aria-label={
+              contextLimit
+                ? `上下文占用 ${Math.round((contextTokens / contextLimit) * 100)}%`
+                : "上下文上限未知"
+            }
+          >
+            <circle
+              cx="8"
+              cy="8"
+              r="6"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="1.5"
+              opacity="0.22"
+            />
+            {!!contextLimit && (
+              <circle
+                cx="8"
+                cy="8"
+                r="6"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="2"
+                pathLength="100"
+                strokeDasharray={`${Math.min(100, Math.max(0, (contextTokens / contextLimit) * 100))} 100`}
+                transform="rotate(-90 8 8)"
+              />
+            )}
+          </svg>
+          <span className="composer-metric-copy">
+            <strong>
+              <span className="metric-label">上下文 </span>
+              {contextEstimated && "≈"}
+              {formatTokenCount(contextTokens)}
+              {contextLimit
+                ? ` / ${formatTokenCount(contextLimit)}`
+                : " tokens"}
+            </strong>
+          </span>
+        </div>
+        <span className="composer-metric-divider" aria-hidden="true" />
+        <div
+          className={cx("composer-metric", outputRate > 0 && "metric-live")}
+          title={`${outputTokens.toLocaleString()} 输出 tokens · ${outputRate > 0 ? `${outputRate.toFixed(1)} tokens/s` : "等待输出"}`}
+        >
+          <Gauge size={12} strokeWidth={1.7} />
+          <span className="composer-metric-copy">
+            <strong>
+              {outputRate > 0 ? `${outputRate.toFixed(1)} tok/s` : "— tok/s"}
+            </strong>
+          </span>
         </div>
       </div>
       <input

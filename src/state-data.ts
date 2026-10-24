@@ -1,4 +1,5 @@
 import { freshState, newProvider } from "./defaults";
+import { parseReasoningLevels } from "./reasoning-levels";
 import type {
   AppState,
   Conversation,
@@ -7,6 +8,7 @@ import type {
   Provider,
   Settings,
   Skin,
+  ImageProvider,
 } from "./types";
 
 const object = (value: unknown): value is Record<string, unknown> =>
@@ -30,6 +32,20 @@ function headers(value: unknown): Record<string, string> {
     throw new Error("请求头必须是字符串键值对象");
   return Object.fromEntries(Object.entries(value)) as Record<string, string>;
 }
+export function parseLocalImage(
+  value: unknown,
+  label: string,
+  limit = 4 * 1024 * 1024,
+): string | undefined {
+  if (value === undefined || value === "") return undefined;
+  if (
+    typeof value !== "string" ||
+    value.length > limit ||
+    !/^data:image\/(?:png|jpeg|webp|avif);base64,[a-z\d+/]+={0,2}$/i.test(value)
+  )
+    throw new Error(`${label}需要有效的本地图片，且大小不能超过限制`);
+  return value;
+}
 export function parseSkin(value: unknown): Skin {
   if (
     !object(value) ||
@@ -46,6 +62,23 @@ export function parseSkin(value: unknown): Skin {
       throw new Error("皮肤颜色需要使用 #RRGGBB");
     return v;
   };
+  const number = (key: string, min: number, max: number) => {
+    const v = value[key];
+    if (v === undefined) return undefined;
+    if (typeof v !== "number" || !Number.isFinite(v) || v < min || v > max)
+      throw new Error(`皮肤 ${key} 需要介于 ${min} 和 ${max} 之间`);
+    return v;
+  };
+  if (
+    value.bubbleStyle !== undefined &&
+    !["soft", "outline", "minimal"].includes(String(value.bubbleStyle))
+  )
+    throw new Error("气泡样式无效");
+  if (
+    value.backgroundPosition !== undefined &&
+    !["center", "top", "bottom"].includes(String(value.backgroundPosition))
+  )
+    throw new Error("背景位置无效");
   return {
     id: value.id,
     name: value.name,
@@ -54,6 +87,18 @@ export function parseSkin(value: unknown): Skin {
     darkAccent: color("darkAccent", true)!,
     background: color("background"),
     darkBackground: color("darkBackground"),
+    custom: value.custom === true,
+    backgroundImage: parseLocalImage(value.backgroundImage, "皮肤背景"),
+    backgroundBlur: number("backgroundBlur", 0, 32),
+    backgroundOpacity: number("backgroundOpacity", 0, 1),
+    backgroundPosition: value.backgroundPosition as Skin["backgroundPosition"],
+    bubbleStyle: value.bubbleStyle as Skin["bubbleStyle"],
+    bubbleRadius: number("bubbleRadius", 0, 28),
+    bubbleOpacity: number("bubbleOpacity", 0.45, 1),
+    userBubble: color("userBubble"),
+    darkUserBubble: color("darkUserBubble"),
+    agentBubble: color("agentBubble"),
+    darkAgentBubble: color("darkAgentBubble"),
   };
 }
 function modelConfigs(value: unknown): Record<string, ModelConfig> {
@@ -82,7 +127,7 @@ function modelConfigs(value: unknown): Record<string, ModelConfig> {
         if (typeof raw[key] === "number") next[key] = raw[key];
       }
       if (raw.levels !== undefined)
-        next.levels = strings(raw.levels, "推理档位");
+        next.levels = parseReasoningLevels(strings(raw.levels, "推理档位"));
       for (const key of ["source", "matchedId"] as const)
         if (typeof raw[key] === "string") next[key] = raw[key];
       if (["effort", "toggle", "budget"].includes(String(raw.reasoningMode)))
@@ -122,6 +167,26 @@ export function parseProvider(value: unknown): Provider {
     headers: headers(value.headers),
   };
 }
+export function parseImageProvider(value: unknown): ImageProvider {
+  if (
+    !object(value) ||
+    !["openai-images", "google-images"].includes(String(value.protocol))
+  )
+    throw new Error("生图供应商协议无效");
+  return {
+    id:
+      typeof value.id === "string" && value.id ? value.id : crypto.randomUUID(),
+    name:
+      typeof value.name === "string" && value.name ? value.name : "生图供应商",
+    protocol: value.protocol as ImageProvider["protocol"],
+    baseURL: httpURL(value.baseURL ?? "", "生图 API 地址"),
+    keys: strings(value.keys ?? [], "生图密钥"),
+    models: strings(value.models ?? [], "生图模型"),
+    availableModels: strings(value.availableModels ?? [], "可用生图模型"),
+    enabled: value.enabled !== false,
+    headers: headers(value.headers),
+  };
+}
 export function parseCustomTool(value: unknown): CustomTool {
   if (
     !object(value) ||
@@ -152,18 +217,52 @@ export function parseCustomTool(value: unknown): CustomTool {
 export function mergeState(raw: AppState | null): AppState {
   const initial = freshState();
   if (!raw) return initial;
+  const validImage = (value: unknown) => {
+    try {
+      return parseLocalImage(value, "头像", 384 * 1024);
+    } catch {
+      return undefined;
+    }
+  };
+  const validSkins = Array.isArray(raw.settings?.skins)
+    ? raw.settings.skins.flatMap((skin) => {
+        try {
+          return [parseSkin(skin)];
+        } catch {
+          return [];
+        }
+      })
+    : [];
   const settings: Settings = {
     ...initial.settings,
     ...raw.settings,
+    providers: (raw.settings?.providers || []).map((provider) => ({
+      ...provider,
+      modelConfigs: Object.fromEntries(
+        Object.entries(provider.modelConfigs || {}).map(([id, config]) => [
+          id,
+          {
+            ...config,
+            ...(Array.isArray(config.levels)
+              ? { levels: parseReasoningLevels(config.levels) }
+              : {}),
+          },
+        ]),
+      ),
+    })),
     toolPermission:
       raw.settings?.toolPermission === "always_allow"
         ? "always_allow"
         : "prompt",
     search: { ...initial.settings.search, ...raw.settings?.search },
-    skins: raw.settings?.skins?.length
-      ? raw.settings.skins
-      : initial.settings.skins,
+    imageProviders: raw.settings?.imageProviders || [],
+    skins: validSkins?.length ? validSkins : initial.settings.skins,
+    chatLayout: raw.settings?.chatLayout === "single" ? "single" : "split",
+    userAvatar: validImage(raw.settings?.userAvatar),
+    agentAvatar: validImage(raw.settings?.agentAvatar),
   };
+  if (!settings.skins.some((skin) => skin.id === settings.skin))
+    settings.skin = settings.skins[0].id;
   return {
     ...initial,
     ...raw,
@@ -171,17 +270,34 @@ export function mergeState(raw: AppState | null): AppState {
     conversations: raw.conversations || [],
   };
 }
+export function agentSettings(settings: Settings): Settings {
+  // Appearance belongs to the renderer. Avoid copying local photos over IPC/HTTP on every turn.
+  return {
+    ...settings,
+    skins: [],
+    userAvatar: undefined,
+    agentAvatar: undefined,
+  };
+}
 export function exportBackup(state: AppState, includeKeys: boolean) {
   // Reconstruct providers and tools so unknown fields from imported files cannot hide credentials.
   const safe = structuredClone(state);
   safe.settings.providers = state.settings.providers.map(parseProvider);
+  safe.settings.imageProviders =
+    state.settings.imageProviders.map(parseImageProvider);
   safe.settings.customTools = state.settings.customTools.map(parseCustomTool);
+  safe.settings.userAvatar = state.settings.userAvatar || "";
+  safe.settings.agentAvatar = state.settings.agentAvatar || "";
   if (!includeKeys) {
     for (const p of safe.settings.providers) {
       p.keys = [];
       p.headers = {};
     }
     safe.settings.search.keys = [];
+    for (const p of safe.settings.imageProviders) {
+      p.keys = [];
+      p.headers = {};
+    }
     for (const t of safe.settings.customTools) t.headers = {};
   }
   return {
@@ -213,6 +329,23 @@ export function importBackup(
     providers.set(p.id, p);
   }
   const patch: Partial<Settings> = {};
+  if (imported.imageProviders !== undefined) {
+    if (!Array.isArray(imported.imageProviders))
+      throw new Error("生图供应商需要为数组");
+    const images = new Map(
+      current.settings.imageProviders.map((p) => [p.id, p]),
+    );
+    for (const raw of imported.imageProviders) {
+      const p = parseImageProvider(raw),
+        old = images.get(p.id);
+      if (data.secretsIncluded === false && old) {
+        p.keys = old.keys;
+        p.headers = old.headers;
+      }
+      images.set(p.id, p);
+    }
+    patch.imageProviders = [...images.values()];
+  }
   if (imported.toolPermission !== undefined) {
     if (!["prompt", "always_allow"].includes(String(imported.toolPermission)))
       throw new Error("工具权限模式无效");
@@ -224,12 +357,21 @@ export function importBackup(
       throw new Error("显示模式无效");
     patch.theme = imported.theme as Settings["theme"];
   }
+  if (imported.chatLayout !== undefined) {
+    if (!["split", "single"].includes(String(imported.chatLayout)))
+      throw new Error("聊天布局无效");
+    patch.chatLayout = imported.chatLayout as Settings["chatLayout"];
+  }
+  for (const key of ["userAvatar", "agentAvatar"] as const)
+    if (Object.hasOwn(imported, key))
+      patch[key] = parseLocalImage(imported[key], "头像", 384 * 1024);
   for (const key of ["compact", "reduceMotion"] as const)
     if (typeof imported[key] === "boolean") patch[key] = imported[key];
   for (const key of [
     "skin",
     "systemPrompt",
     "defaultModel",
+    "defaultImageModel",
     "translationLanguage",
   ] as const)
     if (typeof imported[key] === "string") patch[key] = imported[key];
@@ -260,6 +402,7 @@ export function importBackup(
           "fetch_url",
           "list_attachments",
           "read_attachment",
+          "generate_image",
         ].includes(n),
       )
     )
@@ -325,6 +468,25 @@ export function importBackup(
             ))
         )
           throw new Error("附件格式无效");
+        if (
+          m.generatedImages !== undefined &&
+          (!Array.isArray(m.generatedImages) ||
+            m.generatedImages.some(
+              (a) =>
+                !object(a) ||
+                typeof a.id !== "string" ||
+                !/^[a-zA-Z0-9-]{1,80}$/.test(a.id) ||
+                !["image/png", "image/jpeg", "image/webp"].includes(
+                  String(a.mime),
+                ) ||
+                typeof a.size !== "number" ||
+                !Number.isFinite(a.size) ||
+                a.size < 0 ||
+                (a.revisedPrompt !== undefined &&
+                  typeof a.revisedPrompt !== "string"),
+            ))
+        )
+          throw new Error("生成图片记录格式无效");
         if (
           m.tools !== undefined &&
           (!Array.isArray(m.tools) ||

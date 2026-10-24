@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { lazy, Suspense, useEffect, useMemo, useRef, useState } from "react";
 import {
   ArrowDownToLine,
   ArrowUpFromLine,
@@ -8,31 +8,30 @@ import {
   CloudDownload,
   Code2,
   ExternalLink,
+  Github,
   Globe2,
+  Info,
   Loader2,
-  Monitor,
-  Moon,
   Palette,
   Plus,
   Settings2,
   ShieldCheck,
   Sparkles,
   SquareDashedMousePointer,
-  Sun,
   Trash2,
   Waypoints,
   Wrench,
   X,
+  ImagePlus,
+  ChartNoAxesCombined,
 } from "lucide-react";
 import { bridge } from "./bridge";
+import { appInfo } from "./app-info";
+import Appearance from "./Appearance";
+import ReasoningLevelsInput from "./ReasoningLevelsInput";
 import { newProvider } from "./defaults";
 import { matchModel } from "./model-catalog";
-import {
-  exportBackup,
-  importBackup,
-  parseSkin,
-  parseCustomTool,
-} from "./state-data";
+import { exportBackup, importBackup, parseCustomTool } from "./state-data";
 import type {
   AppState,
   ModelConfig,
@@ -52,7 +51,16 @@ import {
   cx,
 } from "./ui";
 export type SettingsTab =
-  "providers" | "search" | "appearance" | "tools" | "data";
+  | "providers"
+  | "images"
+  | "usage"
+  | "search"
+  | "appearance"
+  | "tools"
+  | "data"
+  | "about";
+const ImageSettings = lazy(() => import("./ImageSettings"));
+const UsageSettings = lazy(() => import("./UsageSettings"));
 type ProviderPatch =
   Partial<Provider> | ((current: Provider) => Partial<Provider>);
 type Props = {
@@ -65,10 +73,13 @@ type Props = {
 };
 const tabs = [
   { id: "providers", label: "供应商与模型", icon: Waypoints },
+  { id: "images", label: "生图供应商", icon: ImagePlus },
   { id: "search", label: "网页搜索", icon: Globe2 },
   { id: "tools", label: "工具扩展", icon: Wrench },
   { id: "appearance", label: "外观与皮肤", icon: Palette },
   { id: "data", label: "数据与偏好", icon: Settings2 },
+  { id: "usage", label: "Token 统计", icon: ChartNoAxesCombined },
+  { id: "about", label: "关于", icon: Info },
 ] as const;
 export default function Settings({
   state,
@@ -84,10 +95,17 @@ export default function Settings({
   );
   const [busy, setBusy] = useState("");
   const settings = state.settings;
-  const update = (patch: Partial<SettingsType>) =>
+  const update = (
+    patch:
+      | Partial<SettingsType>
+      | ((current: SettingsType) => Partial<SettingsType>),
+  ) =>
     onChange((current) => ({
       ...current,
-      settings: { ...current.settings, ...patch },
+      settings: {
+        ...current.settings,
+        ...(typeof patch === "function" ? patch(current.settings) : patch),
+      },
     }));
   const provider =
     settings.providers.find((p) => p.id === selected) || settings.providers[0];
@@ -130,8 +148,12 @@ export default function Settings({
               <button
                 key={t.id}
                 aria-label={t.label}
+                aria-current={tab === t.id ? "page" : undefined}
                 title={t.label}
-                className={cx(tab === t.id && "active")}
+                className={cx(
+                  tab === t.id && "active",
+                  t.id === "about" && "settings-about-tab",
+                )}
                 onClick={() => setTab(t.id)}
               >
                 <t.icon size={17} />
@@ -148,6 +170,32 @@ export default function Settings({
             <CloseButton onClose={onClose} />
           </header>
           <div className="settings-content">
+            {tab === "images" && (
+              <Suspense
+                fallback={
+                  <div className="settings-empty">
+                    <Loader2 size={22} className="spin" />
+                  </div>
+                }
+              >
+                <ImageSettings
+                  settings={settings}
+                  update={update}
+                  notify={notify}
+                />
+              </Suspense>
+            )}
+            {tab === "usage" && (
+              <Suspense
+                fallback={
+                  <div className="settings-empty">
+                    <Loader2 size={22} className="spin" />
+                  </div>
+                }
+              >
+                <UsageSettings notify={notify} />
+              </Suspense>
+            )}
             {tab === "providers" && (
               <>
                 <p className="section-description">
@@ -330,6 +378,7 @@ export default function Settings({
                 notify={notify}
               />
             )}
+            {tab === "about" && <AboutSettings />}
           </div>
         </section>
       </div>
@@ -391,7 +440,6 @@ function ModelManager({
   busy: string;
 }) {
   const [query, setQuery] = useState("");
-  const [manual, setManual] = useState("");
   const [editing, setEditing] = useState("");
   const [visible, setVisible] = useState(120);
   const [marquee, setMarquee] = useState(false);
@@ -552,51 +600,6 @@ function ModelManager({
           </button>
         </div>
       </div>
-      <div className="manual-model">
-        <div className="suggestion-input">
-          <input
-            aria-label="输入模型 ID"
-            placeholder="输入模型 ID，支持联想补全…"
-            value={manual}
-            onChange={(e) => setManual(e.target.value)}
-            onKeyDown={(e) => {
-              if (e.key === "Enter" && manual.trim()) {
-                e.preventDefault();
-                const id = manual.trim();
-                onChange({ models: [...new Set([...p.models, id])] });
-                setManual("");
-              }
-            }}
-          />
-          {manual && (
-            <div className="suggestions">
-              {all
-                .filter(
-                  (id) =>
-                    id.toLowerCase().includes(manual.toLowerCase()) &&
-                    !p.models.includes(id),
-                )
-                .slice(0, 8)
-                .map((id) => (
-                  <button key={id} onClick={() => setManual(id)}>
-                    {id}
-                  </button>
-                ))}
-            </div>
-          )}
-        </div>
-        <button
-          className="button"
-          aria-label="添加启动模型"
-          disabled={!manual.trim()}
-          onClick={() => {
-            onChange({ models: [...new Set([...p.models, manual.trim()])] });
-            setManual("");
-          }}
-        >
-          <Plus size={16} />
-        </button>
-      </div>
       {p.models.length > 0 && (
         <div className="selected-models">
           {p.models.map((id) => (
@@ -731,9 +734,7 @@ function ModelManager({
               </div>
             ))}
             {!filtered.length && (
-              <p className="empty-inline">
-                没有匹配的模型，可直接输入 ID 添加。
-              </p>
+              <p className="empty-inline">没有匹配的模型。</p>
             )}
             {rect && <div className="selection-marquee" style={rect} />}
           </div>
@@ -798,18 +799,14 @@ function ModelManager({
             ))}
           </div>
           <div className="form-grid">
-            <Field label="支持的推理档位">
-              <input
-                value={config.levels?.join(", ") || ""}
-                placeholder="low, medium, high"
-                onChange={(e) =>
-                  patchConfig(editing, {
-                    levels: e.target.value
-                      .split(",")
-                      .map((x) => x.trim())
-                      .filter(Boolean),
-                  })
-                }
+            <Field
+              label="支持的推理档位"
+              hint="逗号、分号或回车分隔，支持中文标点。"
+            >
+              <ReasoningLevelsInput
+                key={`${p.id}:${editing}`}
+                value={config.levels}
+                onChange={(levels) => patchConfig(editing, { levels })}
               />
             </Field>
             <Field label="推理参数形式">
@@ -1051,150 +1048,6 @@ function SearchSettings({
         获取 AnySearch 密钥
         <ExternalLink size={13} />
       </button>
-    </div>
-  );
-}
-function Appearance({
-  settings,
-  update,
-  notify,
-}: {
-  settings: SettingsType;
-  update: (p: Partial<SettingsType>) => void;
-  notify: (t: string) => void;
-}) {
-  const importRef = useRef<HTMLInputElement>(null);
-  return (
-    <div className="settings-section">
-      <h3>显示模式</h3>
-      <div className="theme-options">
-        {(
-          [
-            { id: "light", label: "浅色", icon: Sun },
-            { id: "dark", label: "深色", icon: Moon },
-            { id: "system", label: "跟随系统", icon: Monitor },
-          ] as const
-        ).map((t) => (
-          <button
-            key={t.id}
-            className={cx("theme-card", t.id === settings.theme && "active")}
-            onClick={() => update({ theme: t.id })}
-          >
-            <div className={"theme-preview " + t.id}>
-              <span />
-              <span />
-              <span />
-            </div>
-            <span>
-              <t.icon size={15} />
-              {t.label}
-              {settings.theme === t.id && <Check size={13} />}
-            </span>
-          </button>
-        ))}
-      </div>
-      <div className="section-divider" />
-      <div className="row between">
-        <h3>皮肤库</h3>
-        <div className="row gap">
-          <button
-            className="text-button"
-            onClick={() => importRef.current?.click()}
-          >
-            <ArrowUpFromLine size={13} />
-            导入皮肤
-          </button>
-          <button
-            className="text-button"
-            onClick={() =>
-              void bridge
-                .exportFile(
-                  "lumen-skin.json",
-                  JSON.stringify(
-                    settings.skins.find((s) => s.id === settings.skin),
-                    null,
-                    2,
-                  ),
-                )
-                .catch((error: Error) => notify(error.message))
-            }
-          >
-            <ArrowDownToLine size={13} />
-            导出
-          </button>
-        </div>
-      </div>
-      <div className="skin-grid">
-        {settings.skins.map((s) => (
-          <button
-            key={s.id}
-            className={cx("skin-card", settings.skin === s.id && "active")}
-            onClick={() => update({ skin: s.id })}
-          >
-            <div
-              className="skin-swatch"
-              style={{ background: s.background || "#f6f8f6" }}
-            >
-              <i style={{ background: s.accent }} />
-              <i style={{ background: s.darkAccent }} />
-              <i style={{ background: s.darkBackground || "#202421" }} />
-              {settings.skin === s.id && (
-                <span style={{ color: s.accent }}>
-                  <Check size={15} />
-                </span>
-              )}
-            </div>
-            <strong>{s.name}</strong>
-            <small>{s.description}</small>
-          </button>
-        ))}
-      </div>
-      <input
-        ref={importRef}
-        hidden
-        type="file"
-        accept=".json"
-        onChange={async (e) => {
-          try {
-            const f = e.target.files?.[0];
-            if (f) {
-              const skin = parseSkin(JSON.parse(await f.text()));
-              update({
-                skins: [
-                  ...settings.skins.filter((s) => s.id !== skin.id),
-                  {
-                    id: String(skin.id),
-                    name: String(skin.name),
-                    description: String(skin.description || ""),
-                    accent: skin.accent,
-                    darkAccent: skin.darkAccent,
-                    background: skin.background,
-                    darkBackground: skin.darkBackground,
-                  },
-                ],
-                skin: skin.id,
-              });
-              notify("皮肤已导入");
-            }
-          } catch (error) {
-            notify((error as Error).message);
-          }
-          e.target.value = "";
-        }}
-      />
-      <div className="section-divider" />
-      <Preference
-        label="紧凑布局"
-        description="减小消息间距，更适合小窗口。"
-        checked={settings.compact}
-        onChange={(compact) => update({ compact })}
-      />
-      <Preference
-        label="减少动态效果"
-        description="使用更安静的过渡，也尊重系统偏好。"
-        checked={settings.reduceMotion}
-        onChange={(reduceMotion) => update({ reduceMotion })}
-      />
     </div>
   );
 }
@@ -1501,18 +1354,35 @@ function DataSettings({
           onChange={(e) => update({ systemPrompt: e.target.value })}
         />
       </Field>
+    </div>
+  );
+}
+
+function AboutSettings() {
+  return (
+    <div className="settings-section about-settings">
       <div className="about-card">
         <Logo small />
-        <div>
-          <strong>Lumen · 流明</strong>
-          <p>轻一点，让想法多一点。</p>
-        </div>
-        <span className="version-tag">v0.1.0</span>
+        <strong>{appInfo.name}</strong>
+        <span className="version-tag" aria-label={`版本 ${appInfo.version}`}>
+          v{appInfo.version}
+        </span>
       </div>
-      <p className="sub-description">
-        本地优先 · 无需常驻服务 ·
-        供应商密钥与会话使用本机加密存储。加密密钥也存放于当前用户目录。
-      </p>
+      <a
+        className="about-repository"
+        href={appInfo.repositoryUrl}
+        target="_blank"
+        rel="noopener noreferrer"
+        aria-label="打开 GitHub 开源仓库"
+        onClick={(event) => {
+          event.preventDefault();
+          bridge.openExternal(appInfo.repositoryUrl);
+        }}
+      >
+        <Github size={18} />
+        <span>{appInfo.repositoryUrl.replace(/^https?:\/\//, "")}</span>
+        <ExternalLink size={15} />
+      </a>
     </div>
   );
 }

@@ -1,6 +1,6 @@
 {
   "name": "lumen-utools",
-  "version": "0.1.0",
+  "version": "0.2.4",
   "description": "轻量的 uTools BYOK Agent 聊天插件",
   "license": "MIT",
   "repository": {
@@ -14,10 +14,10 @@
   },
   "type": "module",
   "scripts": {
-    "dev": "vite --host 127.0.0.1",
-    "build": "tsc -b && vite build && node scripts/build.mjs",
+    "dev": "node scripts/sync-catalog.mjs && vite --host 127.0.0.1",
+    "build": "node scripts/sync-catalog.mjs && tsc -b && vite build && node scripts/build.mjs",
     "preview": "vite preview --host 127.0.0.1",
-    "test": "node --test tests/*.test.cjs",
+    "test": "node scripts/sync-catalog.mjs --check && node --test tests/*.test.cjs",
     "test:native": "npm run build && node scripts/verify-native.mjs && node scripts/verify-native.mjs --no-workers",
     "check": "tsc -b && npm test",
     "format": "prettier --write src runtime scripts tests public/plugin.json *.json *.ts index.html",

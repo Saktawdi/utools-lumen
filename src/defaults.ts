@@ -47,6 +47,7 @@ export const freshState = (): AppState => ({
   settings: {
     version: 1,
     providers: [],
+    imageProviders: [],
     search: {
       engine: "anysearch",
       endpoint: "https://api.anysearch.com/mcp",
@@ -67,6 +68,7 @@ export const freshState = (): AppState => ({
     translationLanguage: "cn",
     compact: false,
     reduceMotion: false,
+    chatLayout: "split",
   },
   conversations: [],
 });

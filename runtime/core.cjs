@@ -10,6 +10,8 @@ const { webSearch, withKeys } = require("./search.cjs");
 const { builtins, addCustom } = require("./tools.cjs");
 const { LocalStore } = require("./storage.cjs");
 const { flattenCatalog } = require("./catalog.cjs");
+const { UsageLedger } = require("./usage.cjs");
+const { ImageStudio } = require("./images.cjs");
 function cleanError(error, settings) {
   let text =
     error?.name === "AbortError"
@@ -21,6 +23,10 @@ function cleanError(error, settings) {
       Object.values(p.headers || {}),
     ),
     ...(settings?.search?.keys || []),
+    ...(settings?.imageProviders || []).flatMap((p) => [
+      ...(p.keys || []),
+      ...Object.values(p.headers || {}),
+    ]),
     ...(settings?.customTools || []).flatMap((t) =>
       Object.values(t.headers || {}),
     ),
@@ -58,6 +64,8 @@ class Core {
     this.toolPermission = "prompt";
     this.extraTools = [];
     this.catalogPromise = null;
+    this.ledger = new UsageLedger(this.store);
+    this.studio = new ImageStudio(this.store, this.ledger);
   }
   load() {
     return this.store.read("state", null);
@@ -71,6 +79,30 @@ class Core {
     )
       throw new Error("保存数据格式无效");
     await this.store.write("state", state);
+  }
+  usage() {
+    return this.ledger.read();
+  }
+  imageGenerate(args, signal) {
+    return this.studio.generate(args, signal);
+  }
+  imageJobs() {
+    return this.studio.list();
+  }
+  imageAsset(id, thumbnail) {
+    return this.studio.asset(id, thumbnail);
+  }
+  imageThumbnail(id, data) {
+    return this.studio.thumbnail(id, data);
+  }
+  imageCancel(id) {
+    this.studio.cancel(id);
+  }
+  imageRemove(id) {
+    return this.studio.remove(id);
+  }
+  imageFavorite(id, favorite) {
+    return this.studio.favorite(id, favorite);
   }
   registerTool(tool) {
     this.registry().register(tool);
@@ -223,68 +255,89 @@ class Core {
           effective,
           config,
         );
-        const response = await withKeys(
-          "provider:" + provider.id,
-          provider.keys,
-          async (key) =>
-            assertOk(
-              await request(built.url, {
-                method: "POST",
-                headers: { ...authHeaders(provider, key), ...built.headers },
-                body: built.body,
-                signal,
-              }),
-            ),
-        );
+        const startedAt = Date.now();
         const collector = createCollector(provider.protocol, onEvent);
-        if (
-          String(response.headers["content-type"]).includes("text/event-stream")
-        )
-          for await (const item of sse(response.body)) {
-            signal.throwIfAborted();
-            collector.push(item.data, item.event);
-          }
-        else {
-          const data = await response.json();
-          if (data.error) collector.push(data);
-          if (provider.protocol === "responses") {
-            for (const item of data.output || []) {
-              if (item.type === "message")
-                for (const c of item.content || [])
+        let result,
+          requestStatus = "error";
+        try {
+          const response = await withKeys(
+            "provider:" + provider.id,
+            provider.keys,
+            async (key) =>
+              assertOk(
+                await request(built.url, {
+                  method: "POST",
+                  headers: { ...authHeaders(provider, key), ...built.headers },
+                  body: built.body,
+                  signal,
+                }),
+              ),
+          );
+          if (
+            String(response.headers["content-type"]).includes(
+              "text/event-stream",
+            )
+          )
+            for await (const item of sse(response.body)) {
+              signal.throwIfAborted();
+              collector.push(item.data, item.event);
+            }
+          else {
+            const data = await response.json();
+            if (data.error) collector.push(data);
+            if (provider.protocol === "responses") {
+              for (const item of data.output || []) {
+                if (item.type === "message")
+                  for (const c of item.content || [])
+                    collector.push({
+                      type: "response.output_text.delta",
+                      delta: c.text,
+                    });
+                if (item.type === "function_call")
                   collector.push({
-                    type: "response.output_text.delta",
-                    delta: c.text,
+                    type: "response.output_item.added",
+                    output_index: data.output.indexOf(item),
+                    item,
                   });
-              if (item.type === "function_call")
                 collector.push({
-                  type: "response.output_item.added",
+                  type: "response.output_item.done",
                   output_index: data.output.indexOf(item),
                   item,
                 });
-              collector.push({
-                type: "response.output_item.done",
-                output_index: data.output.indexOf(item),
-                item,
-              });
-            }
-            collector.push({ type: "response.completed", response: data });
-          } else if (provider.protocol === "anthropic") {
-            for (const [index, b] of (data.content || []).entries())
-              collector.push({
-                type: "content_block_start",
-                index,
-                content_block: b,
-              });
-            collector.push({ message: { usage: data.usage } });
-          } else if (Array.isArray(data)) {
-            for (const chunk of data) collector.push(chunk);
-          } else collector.push(data);
-        }
-        const result = collector.result();
-        if (result.usage) {
-          totalUsage.input += result.usage.input;
-          totalUsage.output += result.usage.output;
-          onEvent({ type: "usage", usage: totalUsage });
+              }
+              collector.push({ type: "response.completed", response: data });
+            } else if (provider.protocol === "anthropic") {
+              for (const [index, b] of (data.content || []).entries())
+                collector.push({
+                  type: "content_block_start",
+                  index,
+                  content_block: b,
+                });
+              collector.push({ message: { usage: data.usage } });
+            } else if (Array.isArray(data)) {
+              for (const chunk of data) collector.push(chunk);
+            } else collector.push(data);
+          }
+          result = collector.result();
+          requestStatus = "success";
+        } finally {
+          const measured = collector.usage();
+          await this.ledger.append({
+            startedAt,
+            completedAt: Date.now(),
+            providerId: provider.id,
+            providerName: provider.name || provider.id,
+            model,
+            kind: "chat",
+            status: signal.aborted ? "cancelled" : requestStatus,
+            reported: !!measured,
+            ...measured,
+          });
+          if (measured) {
+            for (const [key, value] of Object.entries(measured))
+              totalUsage[key] = (totalUsage[key] || 0) + value;
+            onEvent({ type: "usage", usage: { ...totalUsage } });
+          }
         }
         if (!result.calls.length) {
           if (!result.text && !result.reasoning)
@@ -313,6 +366,63 @@ class Core {
               settings,
               signal,
               attachments,
+              generateImage: async (params) => {
+                const choices = (settings.imageProviders || []).filter(
+                  (p) => p.enabled && p.models?.length,
+                );
+                const preferred = settings.defaultImageModel || "";
+                const p =
+                  choices.find((p) =>
+                    params.providerId
+                      ? p.id === params.providerId
+                      : preferred.startsWith(p.id + "::"),
+                  ) || (!params.providerId ? choices[0] : undefined);
+                if (!p)
+                  throw new Error(
+                    "请在偏好设置 → 生图供应商中添加供应商和模型",
+                  );
+                const model =
+                  params.model ||
+                  (preferred.startsWith(p.id + "::")
+                    ? preferred.slice(p.id.length + 2)
+                    : p.models[0]);
+                const references = (params.referenceIds || []).map((id) => {
+                  const attached = attachments.find(
+                    (a) => a.id === id && a.type === "image",
+                  );
+                  return (
+                    attached || {
+                      id,
+                      type: "image",
+                      data: this.studio.asset(id),
+                    }
+                  );
+                });
+                const job = await this.imageGenerate(
+                  {
+                    id: crypto.randomUUID(),
+                    provider: p,
+                    model,
+                    prompt: params.prompt,
+                    size: params.size || "auto",
+                    quality: params.quality || "auto",
+                    background: params.background || "auto",
+                    count: params.count || 1,
+                    references,
+                    source: "agent",
+                  },
+                  signal,
+                );
+                if (job.images.length)
+                  onEvent({ type: "images", images: job.images });
+                if (job.status !== "done") throw new Error(job.error);
+                return {
+                  jobId: job.id,
+                  images: job.images,
+                  message:
+                    "图片已展示给用户并存入生图工作室画廊，可通过图片 ID 继续修改。",
+                };
+              },
               approve: (name, args) => {
                 if (this.toolPermission === "always_allow")
                   return Promise.resolve(!signal.aborted);

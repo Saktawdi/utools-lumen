@@ -1,4 +1,74 @@
 export type Protocol = "openai" | "responses" | "anthropic" | "google";
+export type TokenUsage = {
+  input: number;
+  output: number;
+  cachedInput?: number;
+  cacheWrite?: number;
+  reasoning?: number;
+};
+export type ImageProvider = {
+  id: string;
+  name: string;
+  protocol: "openai-images" | "google-images";
+  baseURL: string;
+  keys: string[];
+  models: string[];
+  availableModels: string[];
+  enabled: boolean;
+  headers?: Record<string, string>;
+};
+export type ImageAsset = {
+  id: string;
+  mime: string;
+  size: number;
+  revisedPrompt?: string;
+};
+export type ImageRequest = {
+  id: string;
+  provider: ImageProvider;
+  model: string;
+  prompt: string;
+  size: string;
+  quality: string;
+  count: number;
+  background: string;
+  references: Attachment[];
+  source?: "studio" | "agent";
+};
+export type ImageJob = {
+  id: string;
+  providerId: string;
+  providerName: string;
+  model: string;
+  prompt: string;
+  size: string;
+  quality: string;
+  count: number;
+  background: string;
+  status: "running" | "done" | "error" | "cancelled";
+  createdAt: number;
+  completedAt?: number;
+  error?: string;
+  images: ImageAsset[];
+  source: "studio" | "agent";
+  favorite?: boolean;
+  referenceCount: number;
+  references?: ImageAsset[];
+};
+export type UsageRecord = TokenUsage & {
+  id: string;
+  startedAt: number;
+  completedAt: number;
+  providerId: string;
+  providerName: string;
+  model: string;
+  kind: "chat" | "image";
+  status: "success" | "error" | "cancelled";
+  reported: boolean;
+  images?: number;
+  legacy?: boolean;
+};
+export type UsageData = { records: UsageRecord[]; since: number };
 export type ModelConfig = {
   vision?: boolean;
   reasoning?: boolean;
@@ -41,6 +111,18 @@ export type Skin = {
   darkAccent: string;
   background?: string;
   darkBackground?: string;
+  custom?: boolean;
+  backgroundImage?: string;
+  backgroundBlur?: number;
+  backgroundOpacity?: number;
+  backgroundPosition?: "center" | "top" | "bottom";
+  bubbleStyle?: "soft" | "outline" | "minimal";
+  bubbleRadius?: number;
+  bubbleOpacity?: number;
+  userBubble?: string;
+  darkUserBubble?: string;
+  agentBubble?: string;
+  darkAgentBubble?: string;
 };
 export type Attachment = {
   id: string;
@@ -68,7 +150,8 @@ export type Message = {
   model?: string;
   createdAt: number;
   error?: string;
-  usage?: { input: number; output: number };
+  usage?: TokenUsage;
+  generatedImages?: ImageAsset[];
   interrupted?: boolean;
 };
 export type Conversation = {
@@ -106,6 +189,8 @@ export type ToolPermissionMode = "prompt" | "always_allow";
 export type Settings = {
   version: 1;
   providers: Provider[];
+  imageProviders: ImageProvider[];
+  defaultImageModel?: string;
   search: SearchConfig;
   theme: "light" | "dark" | "system";
   skin: string;
@@ -119,6 +204,9 @@ export type Settings = {
   sendKey: "enter" | "ctrl-enter";
   compact: boolean;
   reduceMotion: boolean;
+  chatLayout: "split" | "single";
+  userAvatar?: string;
+  agentAvatar?: string;
 };
 export type AppState = {
   settings: Settings;
@@ -132,6 +220,7 @@ export type StreamEvent = {
     | "tool"
     | "tool-result"
     | "usage"
+    | "images"
     | "error"
     | "done"
     | "approval"
@@ -141,7 +230,8 @@ export type StreamEvent = {
   id?: string;
   name?: string;
   args?: unknown;
-  usage?: { input: number; output: number };
+  usage?: TokenUsage;
+  images?: ImageAsset[];
 };
 export type ModelEntry = {
   key: string;
@@ -155,6 +245,16 @@ export type Bridge = {
   models: (p: Provider) => Promise<string[]>;
   catalog: (force?: boolean) => Promise<Record<string, unknown>>;
   tools: () => Promise<ToolInfo[]>;
+  imageGenerate: (request: ImageRequest) => Promise<ImageJob>;
+  imageJobs: () => Promise<ImageJob[]>;
+  imageAsset: (id: string, thumbnail?: boolean) => Promise<string>;
+  imageThumbnail: (id: string, data: string) => Promise<void>;
+  imageCancel: (id: string) => Promise<void>;
+  imageRemove: (id: string) => Promise<void>;
+  imageFavorite: (id: string, favorite: boolean) => Promise<void>;
+  usage: () => Promise<UsageData>;
+  saveImage: (id: string) => Promise<void>;
+  copyImage: (id: string) => Promise<void>;
   onToolsChanged?: (fn: () => void) => () => void;
   chat: (
     args: {

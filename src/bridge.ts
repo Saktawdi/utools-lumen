@@ -17,6 +17,43 @@ const preview: Bridge = {
   models: (provider) => api("models", provider),
   catalog: (force) => api("catalog", { force }),
   tools: () => api("tools"),
+  imageGenerate: (request) => api("imageGenerate", request),
+  imageJobs: () => api("imageJobs"),
+  imageAsset: (id, thumbnail) => api("imageAsset", { id, thumbnail }),
+  imageThumbnail: (id, data) => api("imageThumbnail", { id, data }),
+  imageCancel: (id) => api("imageCancel", { id }),
+  imageRemove: (id) => api("imageRemove", { id }),
+  imageFavorite: (id, favorite) => api("imageFavorite", { id, favorite }),
+  usage: () => api("usage"),
+  saveImage: async (id) => {
+    const a = document.createElement("a");
+    a.href = "/__lumen/download/" + encodeURIComponent(id);
+    a.download = `lumen-${id}.png`;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+  },
+  copyImage: async (id) => {
+    const data = await api<string>("imageAsset", { id });
+    const bitmap = await createImageBitmap(await (await fetch(data)).blob());
+    try {
+      const canvas = document.createElement("canvas");
+      canvas.width = bitmap.width;
+      canvas.height = bitmap.height;
+      canvas.getContext("2d")!.drawImage(bitmap, 0, 0);
+      const png = await new Promise<Blob>((resolve, reject) =>
+        canvas.toBlob(
+          (b) => (b ? resolve(b) : reject(new Error("无法复制图片"))),
+          "image/png",
+        ),
+      );
+      await navigator.clipboard.write([
+        new ClipboardItem({ "image/png": png }),
+      ]);
+    } finally {
+      bitmap.close();
+    }
+  },
   searchTest: (config, query) => api("searchTest", { config, query }),
   async chat(args, onEvent) {
     const pending = new AbortController();
@@ -66,13 +103,13 @@ const preview: Bridge = {
   },
   setToolPermission: (mode) => api("setToolPermission", { mode }),
   exportFile: async (name, content) => {
-    const blob = new Blob([content], { type: "application/octet-stream" });
-    const url = URL.createObjectURL(blob);
+    const { id } = await api<{ id: string }>("exportFile", { name, content });
     const a = document.createElement("a");
-    a.href = url;
+    a.href = "/__lumen/export/" + encodeURIComponent(id);
     a.download = name;
+    document.body.appendChild(a);
     a.click();
-    setTimeout(() => URL.revokeObjectURL(url), 1000);
+    a.remove();
   },
   openExternal: (url) => {
     if (/^https?:\/\//i.test(url))

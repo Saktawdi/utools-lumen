@@ -1,4 +1,12 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import {
+  lazy,
+  Suspense,
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 import {
   ArrowDown,
   ArrowDownToLine,
@@ -21,8 +29,11 @@ import {
   Sun,
   Trash2,
   X,
+  WandSparkles,
 } from "lucide-react";
 import { bridge, mergeState } from "./bridge";
+import { skinVariables } from "./appearance-utils";
+import { agentSettings } from "./state-data";
 import { freshState } from "./defaults";
 import Settings from "./Settings";
 import { languageName, quickRequest } from "./quick-commands";
@@ -39,6 +50,7 @@ import type {
   ToolPermissionMode,
   ToolInfo,
 } from "./types";
+import { estimateContextTokens, estimateTextTokens } from "./token-metrics";
 import {
   ApprovalCard,
   Composer,
@@ -56,6 +68,7 @@ import {
   providerEntries,
 } from "./ui";
 const id = () => crypto.randomUUID();
+const Studio = lazy(() => import("./Studio"));
 const makeConversation = (): Conversation => ({
   id: id(),
   title: "新对话",
@@ -63,10 +76,17 @@ const makeConversation = (): Conversation => ({
   createdAt: Date.now(),
   updatedAt: Date.now(),
 });
+type StreamMetrics = {
+  conversationId?: string;
+  outputTokens: number;
+  outputRate: number;
+  active: boolean;
+};
 export default function App() {
   const [state, setState] = useState<AppState>(freshState);
   const stateRef = useRef(state);
   const [ready, setReady] = useState(false);
+  const [darkTheme, setDarkTheme] = useState(false);
   const [loadError, setLoadError] = useState("");
   const [saveError, setSaveError] = useState("");
   const [draft, setDraft] = useState("");
@@ -84,9 +104,21 @@ export default function App() {
   const [searchOpen, setSearchOpen] = useState(false);
   const [searchQuery, setSearchQuery] = useState("");
   const [sidebar, setSidebar] = useState(true);
+  const [view, setView] = useState<"chat" | "studio">("chat");
+  const [studioVisited, setStudioVisited] = useState(false);
   const [modelKey, setModelKey] = useState("");
   const [effort, setEffort] = useState("auto");
   const [busy, setBusy] = useState(false);
+  const [streamMetrics, setStreamMetrics] = useState<StreamMetrics>({
+    outputTokens: 0,
+    outputRate: 0,
+    active: false,
+  });
+  const streamMetricsRef = useRef<{
+    startedAt: number;
+    outputTokens: number;
+    reportedOutput?: number;
+  }>({ startedAt: 0, outputTokens: 0 });
   const [streamId, setStreamId] = useState("");
   const [streamConversation, setStreamConversation] = useState("");
   const [approval, setApproval] = useState<StreamEvent>();
@@ -109,6 +141,12 @@ export default function App() {
   const loading = useRef(false);
   const sending = useRef(false);
   const settings = state.settings;
+  const activeSkin = useMemo(
+    () =>
+      settings.skins.find((skin) => skin.id === settings.skin) ||
+      settings.skins[0],
+    [settings.skin, settings.skins],
+  );
   const active = state.conversations.find((c) => c.id === state.activeId);
   const entries = useMemo(
     () => providerEntries(settings.providers),
@@ -118,6 +156,49 @@ export default function App() {
     entries.find((m) => m.key === (active?.modelKey || modelKey)) ||
     entries.find((m) => m.key === settings.defaultModel) ||
     entries[0];
+  const lastMessage = active
+    ? active.messages[active.messages.length - 1]
+    : undefined;
+  const estimatedContext = useMemo(
+    () => estimateContextTokens(active?.messages || []),
+    [
+      active?.id,
+      active?.messages.length,
+      lastMessage?.id,
+      lastMessage?.usage?.input,
+    ],
+  );
+  const contextMetrics = useMemo(() => {
+    const reportedInput =
+      lastMessage?.role === "assistant" ? lastMessage.usage?.input : undefined;
+    const pendingReply =
+      busy &&
+      streamConversation === active?.id &&
+      !!streamId &&
+      lastMessage?.id === streamId &&
+      lastMessage !== undefined &&
+      !lastMessage.usage;
+    return {
+      tokens:
+        typeof reportedInput === "number" && reportedInput > 0 && !pendingReply
+          ? reportedInput
+          : estimatedContext,
+      estimated:
+        !(typeof reportedInput === "number" && reportedInput > 0) ||
+        pendingReply,
+      limit: selected?.config.context,
+    };
+  }, [
+    active?.id,
+    busy,
+    estimatedContext,
+    lastMessage?.id,
+    lastMessage?.role,
+    lastMessage?.usage?.input,
+    selected?.config.context,
+    streamConversation,
+    streamId,
+  ]);
   const notify = useCallback((text: string) => {
     setToast(text);
     clearTimeout(toastTimer.current);
@@ -236,33 +317,29 @@ export default function App() {
     };
   }, [persist]);
   useEffect(() => {
-    const skin =
-      settings.skins.find((s) => s.id === settings.skin) || settings.skins[0];
     const query = window.matchMedia("(prefers-color-scheme: dark)");
     const apply = () => {
       const dark =
         settings.theme === "dark" ||
         (settings.theme === "system" && query.matches);
       document.documentElement.dataset.theme = dark ? "dark" : "light";
+      setDarkTheme(dark);
       document.documentElement.dataset.motion = settings.reduceMotion
         ? "reduced"
         : "full";
-      document.documentElement.style.setProperty(
-        "--accent",
-        dark ? skin.darkAccent : skin.accent,
-      );
-      document.documentElement.style.setProperty(
-        "--skin-bg",
-        (dark ? skin.darkBackground : skin.background) || "",
-      );
+      for (const [name, value] of Object.entries(
+        skinVariables(activeSkin, dark),
+      ))
+        document.documentElement.style.setProperty(name, value);
     };
     apply();
     query.addEventListener("change", apply);
     return () => query.removeEventListener("change", apply);
-  }, [settings.theme, settings.skin, settings.skins, settings.reduceMotion]);
+  }, [settings.theme, activeSkin, settings.reduceMotion]);
   const focusComposer = () =>
     setTimeout(() => window.dispatchEvent(new Event("lumen-focus")), 30);
   const newChat = useCallback(() => {
+    setView("chat");
     update((s) => ({ ...s, activeId: undefined }));
     setDraft("");
     setAttachments([]);
@@ -280,6 +357,7 @@ export default function App() {
   }, [update]);
   const selectConversation = useCallback(
     (c: Conversation) => {
+      setView("chat");
       update((s) => ({ ...s, activeId: c.id }));
       setEffort(c.effort || "auto");
       if (c.modelKey) setModelKey(c.modelKey);
@@ -290,7 +368,6 @@ export default function App() {
       setSearchOpen(false);
       setMenu("");
       setAtBottom(true);
-      setTimeout(() => tail.current?.scrollIntoView(), 30);
     },
     [update],
   );
@@ -320,8 +397,22 @@ export default function App() {
     return () => window.removeEventListener("keydown", listener);
   }, [newChat, openSettings]);
   useEffect(() => {
+    if (ready && view === "chat") {
+      tail.current?.scrollIntoView({ behavior: "instant" });
+      setAtBottom(true);
+    }
+  }, [ready, state.activeId, view]);
+  useEffect(() => {
     if (atBottom && busy) tail.current?.scrollIntoView({ behavior: "instant" });
   }, [active?.messages, atBottom, busy]);
+  useEffect(() => {
+    const loaded = () => {
+      if (atBottom && view === "chat")
+        tail.current?.scrollIntoView({ behavior: "instant" });
+    };
+    window.addEventListener("lumen-image-loaded", loaded);
+    return () => window.removeEventListener("lumen-image-loaded", loaded);
+  }, [atBottom, view]);
   const addFiles = useCallback(
     async (files: File[]) => {
       const incoming: Attachment[] = [];
@@ -408,12 +499,22 @@ export default function App() {
           tool.name === "list_tools" ||
           (!settings.disabledTools.includes(tool.name) &&
             (tool.name !== "web_search" || settings.search.enabled)),
+        ...(tool.name === "generate_image"
+          ? {
+              enabled:
+                !settings.disabledTools.includes(tool.name) &&
+                settings.imageProviders.some(
+                  (p) => p.enabled && p.models.length > 0,
+                ),
+            }
+          : {}),
       })),
     [
       baseTools,
       settings.customTools,
       settings.disabledTools,
       settings.search.enabled,
+      settings.imageProviders,
     ],
   );
   const toolCount = tools.filter((t) => t.enabled).length;
@@ -483,6 +584,16 @@ export default function App() {
     if (sending.current) return;
     sending.current = true;
     setBusy(true);
+    streamMetricsRef.current = {
+      startedAt: 0,
+      outputTokens: 0,
+    };
+    setStreamMetrics({
+      conversationId: conversation.id,
+      outputTokens: 0,
+      outputRate: 0,
+      active: true,
+    });
     setAtBottom(true);
     setToolsOpen(false);
     const reply: Message = {
@@ -515,6 +626,16 @@ export default function App() {
     const flush = () => {
       clearTimeout(timer);
       timer = undefined;
+      const metrics = streamMetricsRef.current;
+      if (metrics.startedAt) {
+        const elapsed = Math.max(100, Date.now() - metrics.startedAt) / 1000;
+        setStreamMetrics({
+          conversationId: cid,
+          outputTokens: metrics.outputTokens,
+          outputRate: metrics.outputTokens / elapsed,
+          active: true,
+        });
+      }
       const snapshot = {
         ...output,
         tools: output.tools ? [...output.tools] : undefined,
@@ -542,15 +663,31 @@ export default function App() {
           config: target.config,
           effort: requestEffort,
           messages,
-          settings: stateRef.current.settings,
+          settings: agentSettings(stateRef.current.settings),
         },
         (event) => {
           switch (event.type) {
             case "text":
               output.content += event.text || "";
+              if (event.text) {
+                if (!streamMetricsRef.current.startedAt)
+                  streamMetricsRef.current.startedAt = Date.now();
+                if (streamMetricsRef.current.reportedOutput === undefined)
+                  streamMetricsRef.current.outputTokens += estimateTextTokens(
+                    event.text,
+                  );
+              }
               break;
             case "reasoning":
               output.reasoning = (output.reasoning || "") + (event.text || "");
+              if (event.text) {
+                if (!streamMetricsRef.current.startedAt)
+                  streamMetricsRef.current.startedAt = Date.now();
+                if (streamMetricsRef.current.reportedOutput === undefined)
+                  streamMetricsRef.current.outputTokens += estimateTextTokens(
+                    event.text,
+                  );
+              }
               break;
             case "tool":
               if (event.call)
@@ -564,6 +701,16 @@ export default function App() {
               break;
             case "usage":
               output.usage = event.usage;
+              if (typeof event.usage?.output === "number") {
+                streamMetricsRef.current.reportedOutput = event.usage.output;
+                streamMetricsRef.current.outputTokens = event.usage.output;
+              }
+              break;
+            case "images":
+              output.generatedImages = [
+                ...(output.generatedImages || []),
+                ...(event.images || []),
+              ];
               break;
             case "approval":
               setApproval(event);
@@ -584,6 +731,16 @@ export default function App() {
       output.error = (e as Error).message;
     } finally {
       flush();
+      const metrics = streamMetricsRef.current;
+      const elapsed = metrics.startedAt
+        ? Math.max(100, Date.now() - metrics.startedAt) / 1000
+        : 0;
+      setStreamMetrics({
+        conversationId: cid,
+        outputTokens: metrics.outputTokens,
+        outputRate: elapsed ? metrics.outputTokens / elapsed : 0,
+        active: false,
+      });
       setApproval(undefined);
       setBusy(false);
       setStreamId("");
@@ -876,6 +1033,23 @@ export default function App() {
           <span>搜索对话</span>
           <kbd>Ctrl K</kbd>
         </button>
+        <button
+          className={cx(
+            "history-search",
+            "studio-entry",
+            view === "studio" && "active",
+          )}
+          onClick={() => {
+            setStudioVisited(true);
+            setView("studio");
+          }}
+          aria-label="打开生图工作室"
+          aria-current={view === "studio" ? "page" : undefined}
+        >
+          <WandSparkles size={16} />
+          <span>生图工作室</span>
+          <span className="sidebar-beta">BETA</span>
+        </button>
         <div className="history-heading">
           <span>你的对话</span>
           <span>
@@ -899,7 +1073,7 @@ export default function App() {
             <div
               className={cx(
                 "history-item",
-                c.id === state.activeId && "active",
+                view === "chat" && c.id === state.activeId && "active",
               )}
               key={c.id}
             >
@@ -1028,6 +1202,7 @@ export default function App() {
       exportConversation,
       settings.providers,
       openSettings,
+      view,
     ],
   );
   if (loadError)
@@ -1083,7 +1258,34 @@ export default function App() {
       }}
     >
       {sidebarView}
-      <main className={cx("main", !active?.messages.length && "empty-chat")}>
+      {studioVisited && (
+        <Suspense
+          fallback={
+            view === "studio" ? (
+              <div className="studio-loading">
+                <Loader2 size={24} className="spin" />
+              </div>
+            ) : null
+          }
+        >
+          <Studio
+            hidden={view !== "studio"}
+            settings={settings}
+            sidebar={sidebar}
+            onSidebar={() => setSidebar(true)}
+            onChat={() => setView("chat")}
+            onSettings={() => openSettings("images")}
+            notify={notify}
+          />
+        </Suspense>
+      )}
+      <main
+        style={view === "studio" ? { display: "none" } : undefined}
+        className={cx("main", !active?.messages.length && "empty-chat")}
+        data-layout={settings.chatLayout}
+        data-bubbles={activeSkin.bubbleStyle || "soft"}
+      >
+        <div className="chat-backdrop" aria-hidden="true" />
         <header className="topbar">
           <div className="topbar-left">
             {!sidebar && (
@@ -1124,19 +1326,12 @@ export default function App() {
                   ...s,
                   settings: {
                     ...s.settings,
-                    theme:
-                      document.documentElement.dataset.theme === "dark"
-                        ? "light"
-                        : "dark",
+                    theme: darkTheme ? "light" : "dark",
                   },
                 }))
               }
             >
-              {document.documentElement.dataset.theme === "dark" ? (
-                <Moon size={17} />
-              ) : (
-                <Sun size={17} />
-              )}
+              {darkTheme ? <Moon size={17} /> : <Sun size={17} />}
             </IconButton>
             {active?.messages.length ? (
               <IconButton
@@ -1176,6 +1371,8 @@ export default function App() {
                   onEdit={editMessage}
                   onImage={setImage}
                   notify={notify}
+                  userAvatar={settings.userAvatar}
+                  agentAvatar={settings.agentAvatar}
                 />
               ))}
               {approval && streamConversation === active.id && (
@@ -1283,6 +1480,19 @@ export default function App() {
           config={selected?.config || {}}
           effort={effort}
           setEffort={changeEffort}
+          contextTokens={contextMetrics.tokens}
+          contextLimit={contextMetrics.limit}
+          contextEstimated={contextMetrics.estimated}
+          outputRate={
+            streamMetrics.conversationId === active?.id
+              ? streamMetrics.outputRate
+              : 0
+          }
+          outputTokens={
+            streamMetrics.conversationId === active?.id
+              ? streamMetrics.outputTokens
+              : 0
+          }
           editing={!!edit}
           onCancelEdit={() => {
             setEdit(undefined);
