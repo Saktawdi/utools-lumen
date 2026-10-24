@@ -8,7 +8,9 @@ import {
   CloudDownload,
   Code2,
   ExternalLink,
+  Github,
   Globe2,
+  Info,
   Loader2,
   Palette,
   Plus,
@@ -24,6 +26,7 @@ import {
   ChartNoAxesCombined,
 } from "lucide-react";
 import { bridge } from "./bridge";
+import { appInfo } from "./app-info";
 import Appearance from "./Appearance";
 import ReasoningLevelsInput from "./ReasoningLevelsInput";
 import { newProvider } from "./defaults";
@@ -48,7 +51,14 @@ import {
   cx,
 } from "./ui";
 export type SettingsTab =
-  "providers" | "images" | "usage" | "search" | "appearance" | "tools" | "data";
+  | "providers"
+  | "images"
+  | "usage"
+  | "search"
+  | "appearance"
+  | "tools"
+  | "data"
+  | "about";
 const ImageSettings = lazy(() => import("./ImageSettings"));
 const UsageSettings = lazy(() => import("./UsageSettings"));
 type ProviderPatch =
@@ -69,6 +79,7 @@ const tabs = [
   { id: "appearance", label: "外观与皮肤", icon: Palette },
   { id: "data", label: "数据与偏好", icon: Settings2 },
   { id: "usage", label: "Token 统计", icon: ChartNoAxesCombined },
+  { id: "about", label: "关于", icon: Info },
 ] as const;
 export default function Settings({
   state,
@@ -137,8 +148,12 @@ export default function Settings({
               <button
                 key={t.id}
                 aria-label={t.label}
+                aria-current={tab === t.id ? "page" : undefined}
                 title={t.label}
-                className={cx(tab === t.id && "active")}
+                className={cx(
+                  tab === t.id && "active",
+                  t.id === "about" && "settings-about-tab",
+                )}
                 onClick={() => setTab(t.id)}
               >
                 <t.icon size={17} />
@@ -363,6 +378,7 @@ export default function Settings({
                 notify={notify}
               />
             )}
+            {tab === "about" && <AboutSettings />}
           </div>
         </section>
       </div>
@@ -1338,18 +1354,35 @@ function DataSettings({
           onChange={(e) => update({ systemPrompt: e.target.value })}
         />
       </Field>
+    </div>
+  );
+}
+
+function AboutSettings() {
+  return (
+    <div className="settings-section about-settings">
       <div className="about-card">
         <Logo small />
-        <div>
-          <strong>Lumen · 流明</strong>
-          <p>轻一点，让想法多一点。</p>
-        </div>
-        <span className="version-tag">v0.1.0</span>
+        <strong>{appInfo.name}</strong>
+        <span className="version-tag" aria-label={`版本 ${appInfo.version}`}>
+          v{appInfo.version}
+        </span>
       </div>
-      <p className="sub-description">
-        本地优先 · 无需常驻服务 ·
-        供应商密钥与会话使用本机加密存储。加密密钥也存放于当前用户目录。
-      </p>
+      <a
+        className="about-repository"
+        href={appInfo.repositoryUrl}
+        target="_blank"
+        rel="noopener noreferrer"
+        aria-label="打开 GitHub 开源仓库"
+        onClick={(event) => {
+          event.preventDefault();
+          bridge.openExternal(appInfo.repositoryUrl);
+        }}
+      >
+        <Github size={18} />
+        <span>{appInfo.repositoryUrl.replace(/^https?:\/\//, "")}</span>
+        <ExternalLink size={15} />
+      </a>
     </div>
   );
 }
