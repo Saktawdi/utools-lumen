@@ -222,6 +222,11 @@ export function parseCustomTool(value: unknown): CustomTool {
     headers: headers(value.headers),
   };
 }
+export function parseToolRoundLimit(value: unknown): number {
+  if (typeof value !== "number" || !Number.isSafeInteger(value) || value < 0)
+    throw new Error("工具调用轮次上限需要为非负安全整数，0 表示不限制");
+  return value;
+}
 export function mergeState(raw: AppState | null): AppState {
   const initial = freshState();
   if (!raw) return initial;
@@ -266,9 +271,15 @@ export function mergeState(raw: AppState | null): AppState {
       raw.settings?.toolPermission === "always_allow"
         ? "always_allow"
         : "prompt",
+    toolRoundLimit:
+      Number.isSafeInteger(raw.settings?.toolRoundLimit) &&
+      raw.settings.toolRoundLimit >= 0
+        ? raw.settings.toolRoundLimit
+        : 0,
     search: { ...initial.settings.search, ...raw.settings?.search },
     imageProviders: raw.settings?.imageProviders || [],
     skins: validSkins?.length ? validSkins : initial.settings.skins,
+    screenshotHideWindow: raw.settings?.screenshotHideWindow !== false,
     chatLayout: raw.settings?.chatLayout === "single" ? "single" : "split",
     userAvatar: validImage(raw.settings?.userAvatar),
     agentAvatar: validImage(raw.settings?.agentAvatar),
@@ -411,6 +422,8 @@ export function importBackup(
     }
     patch.imageProviders = [...images.values()];
   }
+  if (Object.hasOwn(imported, "toolRoundLimit"))
+    patch.toolRoundLimit = parseToolRoundLimit(imported.toolRoundLimit);
   if (imported.toolPermission !== undefined) {
     if (!["prompt", "always_allow"].includes(String(imported.toolPermission)))
       throw new Error("工具权限模式无效");
@@ -430,6 +443,11 @@ export function importBackup(
   for (const key of ["userAvatar", "agentAvatar"] as const)
     if (Object.hasOwn(imported, key))
       patch[key] = parseLocalImage(imported[key], "头像", 384 * 1024);
+  if (Object.hasOwn(imported, "screenshotHideWindow")) {
+    if (typeof imported.screenshotHideWindow !== "boolean")
+      throw new Error("截图时隐藏窗口偏好需要为布尔值");
+    patch.screenshotHideWindow = imported.screenshotHideWindow;
+  }
   for (const key of ["compact", "reduceMotion"] as const)
     if (typeof imported[key] === "boolean") patch[key] = imported[key];
   for (const key of [

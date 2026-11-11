@@ -10,7 +10,7 @@ const api = async <T>(method: string, args: unknown = {}): Promise<T> => {
   if (!response.ok) throw new Error(result.error || "本地桥接服务不可用");
   return result;
 };
-let controller: AbortController | undefined;
+const controllers = new Map<string, AbortController>();
 const preview: Bridge = {
   load: () => api("load"),
   save: (state) => api("save", state),
@@ -56,47 +56,59 @@ const preview: Bridge = {
   },
   searchTest: (config, query) => api("searchTest", { config, query }),
   async chat(args, onEvent) {
+    const runId = args.conversationId || crypto.randomUUID();
+    if (controllers.has(runId)) throw new Error("当前会话已有请求正在运行");
     const pending = new AbortController();
-    controller = pending;
-    const response = await fetch("/__lumen/chat", {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        "X-Lumen-Client": "local",
-      },
-      body: JSON.stringify(args),
-      signal: pending.signal,
-    });
-    if (!response.ok) throw new Error("本地聊天服务不可用");
-    const reader = response.body!.getReader();
-    const decoder = new TextDecoder();
-    let buffer = "";
+    controllers.set(runId, pending);
+    let reader: ReadableStreamDefaultReader<Uint8Array> | undefined;
     try {
+      const response = await fetch("/__lumen/chat", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "X-Lumen-Client": "local",
+        },
+        body: JSON.stringify({ ...args, conversationId: runId }),
+        signal: pending.signal,
+      });
+      if (!response.ok || !response.body) throw new Error("本地聊天服务不可用");
+      reader = response.body.getReader();
+      const decoder = new TextDecoder();
+      let buffer = "";
+      const emit = (line: string) => {
+        if (!line.trim()) return;
+        const event: StreamEvent = JSON.parse(line);
+        if (event.type === "error") throw new Error(event.text);
+        onEvent(event);
+      };
       while (true) {
         const { done, value } = await reader.read();
-        if (done) break;
+        if (done) {
+          emit(buffer + decoder.decode());
+          break;
+        }
         buffer += decoder.decode(value, { stream: true });
         let n;
         while ((n = buffer.indexOf("\n")) >= 0) {
-          const line = buffer.slice(0, n);
+          emit(buffer.slice(0, n));
           buffer = buffer.slice(n + 1);
-          if (line) {
-            const event: StreamEvent = JSON.parse(line);
-            if (event.type === "error") throw new Error(event.text);
-            onEvent(event);
-          }
         }
       }
     } catch (e) {
       if (!pending.signal.aborted) throw e;
       onEvent({ type: "done", text: "stopped" });
     } finally {
-      controller = undefined;
+      // A malformed/failed stream must also disconnect its server-side run.
+      await reader?.cancel().catch(() => {});
+      reader?.releaseLock();
+      if (controllers.get(runId) === pending) controllers.delete(runId);
     }
   },
-  stop: () => {
-    void api("stop");
-    controller?.abort();
+  stop: (conversationId) => {
+    // Closing a response cancels that exact server request, not a newer run of the same conversation.
+    for (const [id, pending] of controllers)
+      if (conversationId === undefined || id === conversationId)
+        pending.abort();
   },
   approve: (id, allow) => {
     void api("approve", { id, allow });
@@ -124,7 +136,9 @@ const preview: Bridge = {
     let live = true;
     if (
       import.meta.env.DEV &&
-      ["translate", "ask", "screenshot-translate"].includes(code || "")
+      ["translate", "ask", "screenshot-translate", "screenshot-ask"].includes(
+        code || "",
+      )
     ) {
       queueMicrotask(() => {
         if (live)

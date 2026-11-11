@@ -140,6 +140,17 @@ export type ToolCall = {
   status: "running" | "done" | "error";
   duration?: number;
 };
+// Ordered provider-neutral messages, with native signed blocks for exact continuation.
+export type AgentMessage = {
+  role: "assistant" | "tool";
+  content: string;
+  tool_calls?: Pick<ToolCall, "id" | "name" | "arguments">[];
+  tool_call_id?: string;
+  tool_name?: string;
+  nativeAnthropic?: Record<string, unknown>[];
+  nativeResponses?: Record<string, unknown>[];
+  nativeGoogle?: Record<string, unknown>[];
+};
 export type Message = {
   id: string;
   role: "user" | "assistant";
@@ -147,6 +158,8 @@ export type Message = {
   reasoning?: string;
   attachments?: Attachment[];
   tools?: ToolCall[];
+  agentContext?: AgentMessage[];
+  toolLimit?: number;
   model?: string;
   createdAt: number;
   error?: string;
@@ -224,12 +237,14 @@ export type Settings = {
   skins: Skin[];
   disabledTools: string[];
   toolPermission: ToolPermissionMode;
+  toolRoundLimit: number;
   customTools: CustomTool[];
   systemPrompt: string;
   translationLanguage: string;
   translationLanguages: string[];
   defaultModel?: string;
   sendKey: "enter" | "ctrl-enter";
+  screenshotHideWindow: boolean;
   compact: boolean;
   reduceMotion: boolean;
   chatLayout: "split" | "single";
@@ -250,6 +265,7 @@ export type StreamEvent = {
     | "reasoning"
     | "tool"
     | "tool-result"
+    | "context"
     | "usage"
     | "images"
     | "error"
@@ -259,6 +275,9 @@ export type StreamEvent = {
     | "conversation-action";
   text?: string;
   call?: ToolCall;
+  context?: AgentMessage[];
+  reason?: "tool-limit";
+  limit?: number;
   id?: string;
   name?: string;
   args?: unknown;
@@ -301,7 +320,7 @@ export type Bridge = {
     },
     onEvent: (event: StreamEvent) => void,
   ) => Promise<void>;
-  stop: () => void;
+  stop: (conversationId?: string) => void;
   approve: (id: string, allow: boolean) => void;
   setToolPermission: (mode: ToolPermissionMode) => Promise<void>;
   conversationResult: (
@@ -312,7 +331,9 @@ export type Bridge = {
   searchTest: (config: SearchConfig, query: string) => Promise<unknown>;
   exportFile: (name: string, content: string) => Promise<void>;
   openExternal: (url: string) => void;
-  captureScreen?: () => Promise<string | null>;
+  captureScreen?: (options?: {
+    hideWindow?: boolean;
+  }) => Promise<string | null>;
   onEnter?: (fn: (entry: PluginEntry) => void) => () => void;
   onLeave?: (fn: () => void) => () => void;
 };

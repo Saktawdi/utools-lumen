@@ -1,4 +1,5 @@
-export type QuickAction = "translate" | "screenshot-translate" | "ask";
+export type QuickAction =
+  "translate" | "screenshot-translate" | "ask" | "screenshot-ask";
 const languages: Record<string, string> = {
   cn: "简体中文",
   zh: "简体中文",
@@ -111,6 +112,11 @@ export function quickRequest(
   language = "cn",
 ) {
   const target = languageName(language);
+  if (action === "screenshot-ask")
+    return {
+      title: "截图问答",
+      prompt: `请分析这张截图，解释其中的内容，并回答图片中出现的问题。如果信息不足，请说明需要哪些补充信息，不要猜测。${text.trim() ? `\n\n用户问题：\n${text.trim()}` : ""}`,
+    };
   if (action === "ask")
     return {
       title: `问答 · ${text.trim().slice(0, 22)}`,

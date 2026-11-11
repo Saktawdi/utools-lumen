@@ -1463,6 +1463,38 @@ kbd {
   font-size: 17px;
   line-height: 10px;
 }
+.capture-preferences {
+  position: absolute;
+  bottom: 38px;
+  left: 0;
+  width: 220px;
+  padding: 6px;
+}
+.capture-preferences-title {
+  color: var(--muted);
+  font-size: 11px;
+  padding: 6px 9px;
+}
+.capture-preferences > button {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  width: 100%;
+  padding: 9px;
+  border-radius: 7px;
+  font-size: 12px;
+  text-align: left;
+}
+.capture-preferences > button:hover,
+.capture-preferences > button:focus-visible,
+.capture-preferences > button[aria-checked="true"] {
+  background: var(--soft-accent);
+  color: var(--accent);
+}
+.capture-preferences-check {
+  display: flex;
+  width: 14px;
+}
 .reasoning-popover {
   position: absolute;
   bottom: 38px;
@@ -2019,15 +2051,6 @@ kbd {
   box-shadow: var(--shadow);
   z-index: 25;
   color: var(--secondary);
-}
-.other-chat-status {
-  font-size: 11px;
-  color: var(--accent);
-  align-self: center;
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  padding: 8px;
 }
 .approval-card {
   display: flex;

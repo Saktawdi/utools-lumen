@@ -32,6 +32,8 @@ import {
 import { bridge, mergeState } from "./bridge";
 import { skinVariables } from "./appearance-utils";
 import { agentSettings } from "./state-data";
+import { AttachmentIngress } from "./attachment-ingress";
+import type { AttachmentSource } from "./attachment-ingress";
 import ConversationList from "./ConversationList";
 import {
   applyConversationAction,
@@ -87,6 +89,15 @@ type StreamMetrics = {
   outputRate: number;
   active: boolean;
 };
+type ConversationRun = {
+  replyId: string;
+  approval?: StreamEvent;
+};
+const emptyStreamMetrics: StreamMetrics = {
+  outputTokens: 0,
+  outputRate: 0,
+  active: false,
+};
 export default function App() {
   const [state, setState] = useState<AppState>(freshState);
   const stateRef = useRef(state);
@@ -100,7 +111,22 @@ export default function App() {
   const entryHandler = useRef<(entry: PluginEntry) => Promise<void>>(
     async () => {},
   );
-  const [attachments, setAttachments] = useState<Attachment[]>([]);
+  const [attachments, setAttachmentState] = useState<Attachment[]>([]);
+  const attachmentsRef = useRef(attachments);
+  const attachmentIngress = useRef(new AttachmentIngress());
+  const setAttachments = useCallback(
+    (value: Attachment[] | ((previous: Attachment[]) => Attachment[])) => {
+      // Replacement starts a new draft context. Do not let old reads or screenshot
+      // callbacks append into a different conversation after navigation or sending.
+      if (typeof value !== "function") attachmentIngress.current.reset();
+      const next =
+        typeof value === "function" ? value(attachmentsRef.current) : value;
+      attachmentsRef.current = next;
+      setAttachmentState(next);
+    },
+    [],
+  );
+  const capturing = useRef(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [settingsTab, setSettingsTab] = useState<SettingsTab>("providers");
   const [baseTools, setBaseTools] = useState<ToolInfo[]>([]);
@@ -113,20 +139,10 @@ export default function App() {
   const [studioVisited, setStudioVisited] = useState(false);
   const [modelKey, setModelKey] = useState("");
   const [effort, setEffort] = useState("auto");
-  const [busy, setBusy] = useState(false);
-  const [streamMetrics, setStreamMetrics] = useState<StreamMetrics>({
-    outputTokens: 0,
-    outputRate: 0,
-    active: false,
-  });
-  const streamMetricsRef = useRef<{
-    startedAt: number;
-    outputTokens: number;
-    reportedOutput?: number;
-  }>({ startedAt: 0, outputTokens: 0 });
-  const [streamId, setStreamId] = useState("");
-  const [streamConversation, setStreamConversation] = useState("");
-  const [approval, setApproval] = useState<StreamEvent>();
+  const [runs, setRuns] = useState<Record<string, ConversationRun>>({});
+  const [metricsByConversation, setMetricsByConversation] = useState<
+    Record<string, StreamMetrics>
+  >({});
   const [toast, setToast] = useState("");
   const toastTimer = useRef<ReturnType<typeof setTimeout> | undefined>(
     undefined,
@@ -142,7 +158,7 @@ export default function App() {
   const dirty = useRef(false);
   const saving = useRef<Promise<boolean> | undefined>(undefined);
   const loading = useRef(false);
-  const sending = useRef(false);
+  const sending = useRef(new Map<string, string>());
   const settings = state.settings;
   const activeSkin = useMemo(
     () =>
@@ -151,6 +167,19 @@ export default function App() {
     [settings.skin, settings.skins],
   );
   const active = state.conversations.find((c) => c.id === state.activeId);
+  const activeRun = active ? runs[active.id] : undefined;
+  const busy = !!activeRun;
+  const streamId = activeRun?.replyId || "";
+  const approval = activeRun?.approval;
+  const streamMetrics =
+    (active && metricsByConversation[active.id]) || emptyStreamMetrics;
+  // Metrics update frequently; keep sidebar status sets stable until runs change.
+  const runningIds = useMemo(() => new Set(Object.keys(runs)), [runs]);
+  const waitingIds = useMemo(
+    () => new Set(Object.keys(runs).filter((cid) => !!runs[cid].approval)),
+    [runs],
+  );
+  const anyBusy = runningIds.size > 0;
   const entries = useMemo(
     () => providerEntries(settings.providers),
     [settings.providers],
@@ -176,7 +205,6 @@ export default function App() {
       lastMessage?.role === "assistant" ? lastMessage.usage?.input : undefined;
     const pendingReply =
       busy &&
-      streamConversation === active?.id &&
       !!streamId &&
       lastMessage?.id === streamId &&
       lastMessage !== undefined &&
@@ -199,7 +227,6 @@ export default function App() {
     lastMessage?.role,
     lastMessage?.usage?.input,
     selected?.config.context,
-    streamConversation,
     streamId,
   ]);
   const notify = useCallback((text: string) => {
@@ -252,6 +279,8 @@ export default function App() {
   const organizeConversation = useCallback(
     (action: ConversationAction) => {
       try {
+        if (action.type === "delete" && sending.current.has(action.id))
+          throw new Error("请先停止此会话的生成后再删除");
         update((current) => applyConversationAction(current, action));
         void persist();
         return true;
@@ -305,10 +334,10 @@ export default function App() {
     [notify],
   );
   useEffect(() => {
-    if (!ready || busy) return;
+    if (!ready || anyBusy) return;
     const timer = setTimeout(() => void persist(), 750);
     return () => clearTimeout(timer);
-  }, [state, ready, busy, persist]);
+  }, [state, ready, anyBusy, persist]);
   useEffect(() => {
     if (!ready) return;
     const timer = setTimeout(() => void persist(), 750);
@@ -454,20 +483,44 @@ export default function App() {
     window.addEventListener("lumen-image-loaded", loaded);
     return () => window.removeEventListener("lumen-image-loaded", loaded);
   }, [atBottom, view]);
+  const receiveAttachments = useCallback(
+    async (
+      incoming: Attachment[],
+      source: AttachmentSource,
+      at: number,
+      token = attachmentIngress.current.token(),
+    ) => {
+      const result = await attachmentIngress.current.receive(
+        incoming,
+        source,
+        at,
+        () => attachmentsRef.current,
+        (next) => {
+          attachmentsRef.current = next;
+          setAttachmentState(next);
+        },
+        token,
+      );
+      if (result.overLimit)
+        notify("附件已达数量或大小限制（最多 10 个，合计 24 MB）");
+      return result.added;
+    },
+    [notify],
+  );
   const addFiles = useCallback(
-    async (files: File[]) => {
+    async (files: File[], source?: "paste") => {
+      const at = Date.now();
+      const token = attachmentIngress.current.token();
       const incoming: Attachment[] = [];
-      let total = attachments.reduce((n, a) => n + a.size, 0);
       for (const file of files) {
-        if (attachments.length + incoming.length >= 10) {
+        // Clipboard echoes must be removed before count/combined-size limits.
+        // Explicit picks have no echoes, so avoid reading more than ten of them.
+        if (source !== "paste" && incoming.length >= 10) {
           notify("每条消息最多添加 10 个附件");
           break;
         }
-        if (
-          file.size > 12 * 1024 * 1024 ||
-          total + file.size > 24 * 1024 * 1024
-        ) {
-          notify(`${file.name} 超过附件大小限制（单个 12 MB，合计 24 MB）`);
+        if (file.size > 12 * 1024 * 1024) {
+          notify(`${file.name} 超过附件大小限制（单个 12 MB）`);
           continue;
         }
         try {
@@ -478,6 +531,13 @@ export default function App() {
               reader.onerror = () => reject(new Error("无法读取图片"));
               reader.readAsDataURL(file);
             });
+            // Clipboard formats may expose the same image as multiple File objects.
+            // Deduplicate only this paste batch; a later intentional paste remains a new attachment.
+            if (
+              source === "paste" &&
+              incoming.some((a) => a.type === "image" && a.data === data)
+            )
+              continue;
             incoming.push({
               id: id(),
               name: file.name || "粘贴的图片.png",
@@ -506,15 +566,14 @@ export default function App() {
               size: file.size,
             });
           }
-          total += file.size;
         } catch (e) {
           notify((e as Error).message);
         }
       }
-      setAttachments((previous) => [...previous, ...incoming]);
+      await receiveAttachments(incoming, source || "file", at, token);
       focusComposer();
     },
-    [attachments, notify],
+    [receiveAttachments, notify],
   );
   useEffect(() => bridge.onEnter?.(setPendingEntry), []);
   useEffect(() => {
@@ -622,21 +681,8 @@ export default function App() {
       openSettings();
       return;
     }
-    if (sending.current) return;
-    sending.current = true;
-    setBusy(true);
-    streamMetricsRef.current = {
-      startedAt: 0,
-      outputTokens: 0,
-    };
-    setStreamMetrics({
-      conversationId: conversation.id,
-      outputTokens: 0,
-      outputRate: 0,
-      active: true,
-    });
-    setAtBottom(true);
-    setToolsOpen(false);
+    const cid = conversation.id;
+    if (sending.current.has(cid)) return;
     const reply: Message = {
       id: id(),
       role: "assistant",
@@ -644,9 +690,21 @@ export default function App() {
       model: target.id,
       createdAt: Date.now(),
     };
-    const cid = conversation.id;
-    setStreamId(reply.id);
-    setStreamConversation(cid);
+    // Lock synchronously, before React commits, but only for this conversation.
+    sending.current.set(cid, reply.id);
+    setRuns((current) => ({ ...current, [cid]: { replyId: reply.id } }));
+    const requestSettings = agentSettings(stateRef.current.settings);
+    const metrics: {
+      startedAt: number;
+      outputTokens: number;
+      reportedOutput?: number;
+    } = { startedAt: 0, outputTokens: 0 };
+    setMetricsByConversation((current) => ({
+      ...current,
+      [cid]: { ...emptyStreamMetrics, conversationId: cid, active: true },
+    }));
+    setAtBottom(true);
+    setToolsOpen(false);
     const nextConversation = {
       ...conversation,
       archived: false,
@@ -669,15 +727,17 @@ export default function App() {
     const flush = () => {
       clearTimeout(timer);
       timer = undefined;
-      const metrics = streamMetricsRef.current;
       if (metrics.startedAt) {
         const elapsed = Math.max(100, Date.now() - metrics.startedAt) / 1000;
-        setStreamMetrics({
-          conversationId: cid,
-          outputTokens: metrics.outputTokens,
-          outputRate: metrics.outputTokens / elapsed,
-          active: true,
-        });
+        setMetricsByConversation((current) => ({
+          ...current,
+          [cid]: {
+            conversationId: cid,
+            outputTokens: metrics.outputTokens,
+            outputRate: metrics.outputTokens / elapsed,
+            active: true,
+          },
+        }));
       }
       const snapshot = {
         ...output,
@@ -706,10 +766,11 @@ export default function App() {
           config: target.config,
           effort: requestEffort,
           messages,
-          settings: agentSettings(stateRef.current.settings),
+          settings: requestSettings,
           conversationId: cid,
         },
         (event) => {
+          if (sending.current.get(cid) !== reply.id) return;
           switch (event.type) {
             case "conversation-action":
               if (event.id && event.command) {
@@ -718,6 +779,11 @@ export default function App() {
                 void (async () => {
                   try {
                     const current = stateRef.current;
+                    if (
+                      command.type === "delete" &&
+                      sending.current.has(command.id)
+                    )
+                      throw new Error("请先停止此会话的生成后再删除");
                     const applied = conversationCommand(current, command);
                     if (applied.state !== current) {
                       update(applied.state);
@@ -740,23 +806,17 @@ export default function App() {
             case "text":
               output.content += event.text || "";
               if (event.text) {
-                if (!streamMetricsRef.current.startedAt)
-                  streamMetricsRef.current.startedAt = Date.now();
-                if (streamMetricsRef.current.reportedOutput === undefined)
-                  streamMetricsRef.current.outputTokens += estimateTextTokens(
-                    event.text,
-                  );
+                if (!metrics.startedAt) metrics.startedAt = Date.now();
+                if (metrics.reportedOutput === undefined)
+                  metrics.outputTokens += estimateTextTokens(event.text);
               }
               break;
             case "reasoning":
               output.reasoning = (output.reasoning || "") + (event.text || "");
               if (event.text) {
-                if (!streamMetricsRef.current.startedAt)
-                  streamMetricsRef.current.startedAt = Date.now();
-                if (streamMetricsRef.current.reportedOutput === undefined)
-                  streamMetricsRef.current.outputTokens += estimateTextTokens(
-                    event.text,
-                  );
+                if (!metrics.startedAt) metrics.startedAt = Date.now();
+                if (metrics.reportedOutput === undefined)
+                  metrics.outputTokens += estimateTextTokens(event.text);
               }
               break;
             case "tool":
@@ -772,8 +832,8 @@ export default function App() {
             case "usage":
               output.usage = event.usage;
               if (typeof event.usage?.output === "number") {
-                streamMetricsRef.current.reportedOutput = event.usage.output;
-                streamMetricsRef.current.outputTokens = event.usage.output;
+                metrics.reportedOutput = event.usage.output;
+                metrics.outputTokens = event.usage.output;
               }
               break;
             case "images":
@@ -782,16 +842,33 @@ export default function App() {
                 ...(event.images || []),
               ];
               break;
+            case "context":
+              if (event.context !== undefined)
+                output.agentContext = structuredClone(event.context);
+              break;
             case "approval":
-              setApproval(event);
+              setRuns((current) => {
+                const run = current[cid];
+                if (run?.replyId !== reply.id) return current;
+                return { ...current, [cid]: { ...run, approval: event } };
+              });
               break;
             case "approval-resolved":
-              setApproval((current) =>
-                current?.id === event.id ? undefined : current,
-              );
+              setRuns((current) => {
+                const run = current[cid];
+                if (run?.replyId !== reply.id || run.approval?.id !== event.id)
+                  return current;
+                return { ...current, [cid]: { ...run, approval: undefined } };
+              });
+              break;
+            case "error":
+              output.error = event.text || "请求失败，请稍后重试";
               break;
             case "done":
-              if (event.text === "stopped") output.interrupted = true;
+              if (event.reason === "tool-limit")
+                output.toolLimit =
+                  event.limit ?? requestSettings.toolRoundLimit;
+              else if (event.text === "stopped") output.interrupted = true;
               break;
           }
           if (!timer) timer = setTimeout(flush, 45);
@@ -800,32 +877,51 @@ export default function App() {
     } catch (e) {
       output.error = (e as Error).message;
     } finally {
+      // A missing tool result is an interruption, never a successful execution.
+      const interruption = "工具执行已中断，未收到完成结果";
+      output.tools = output.tools?.map((call) =>
+        call.status === "running"
+          ? {
+              ...call,
+              status: "error",
+              result:
+                call.result === undefined
+                  ? interruption
+                  : { result: call.result, error: interruption },
+            }
+          : call,
+      );
       flush();
-      const metrics = streamMetricsRef.current;
       const elapsed = metrics.startedAt
         ? Math.max(100, Date.now() - metrics.startedAt) / 1000
         : 0;
-      setStreamMetrics({
-        conversationId: cid,
-        outputTokens: metrics.outputTokens,
-        outputRate: elapsed ? metrics.outputTokens / elapsed : 0,
-        active: false,
+      setMetricsByConversation((current) => ({
+        ...current,
+        [cid]: {
+          conversationId: cid,
+          outputTokens: metrics.outputTokens,
+          outputRate: elapsed ? metrics.outputTokens / elapsed : 0,
+          active: false,
+        },
+      }));
+      if (sending.current.get(cid) === reply.id) sending.current.delete(cid);
+      setRuns((current) => {
+        if (current[cid]?.replyId !== reply.id) return current;
+        const next = { ...current };
+        delete next[cid];
+        return next;
       });
-      setApproval(undefined);
-      setBusy(false);
-      setStreamId("");
-      setStreamConversation("");
-      sending.current = false;
       await persist();
-      focusComposer();
     }
   }
   function send() {
-    if ((!draft.trim() && !attachments.length) || sending.current) return;
+    if (!draft.trim() && !attachments.length) return;
     if (quickAction) {
       sendQuick(quickAction, draft, attachments);
       return;
     }
+    const current = stateRef.current;
+    if (current.activeId && sending.current.has(current.activeId)) return;
     if (!selected) {
       openSettings();
       notify("添加供应商后，勾选一个启动模型即可聊天");
@@ -845,9 +941,11 @@ export default function App() {
       attachments: [...attachments],
       createdAt: Date.now(),
     };
-    const conversation = active || {
+    const conversation = current.conversations.find(
+      (c) => c.id === current.activeId,
+    ) || {
       ...makeConversation(),
-      groupId: state.conversationGroups.some((g) => g.id === draftGroupId)
+      groupId: current.conversationGroups.some((g) => g.id === draftGroupId)
         ? draftGroupId
         : undefined,
     };
@@ -900,11 +998,6 @@ export default function App() {
       setAttachments(images);
       focusComposer();
     };
-    if (sending.current) {
-      stage();
-      notify("当前仍在生成，内容已放入输入框，请稍后发送");
-      return;
-    }
     if (!target) {
       stage();
       openSettings();
@@ -940,36 +1033,48 @@ export default function App() {
       "auto",
     );
   }
-  async function captureImage() {
+  async function takeScreenshot() {
     if (!bridge.captureScreen) {
       notify("截图功能请在 uTools 中使用；也可以直接粘贴图片");
-      return;
+      return null;
     }
-    const data = await bridge.captureScreen();
+    if (capturing.current) return null;
+    capturing.current = true;
+    try {
+      return await bridge.captureScreen({
+        hideWindow: stateRef.current.settings.screenshotHideWindow,
+      });
+    } finally {
+      capturing.current = false;
+    }
+  }
+  async function captureImage() {
+    const token = attachmentIngress.current.token();
+    const data = await takeScreenshot();
     if (data) {
-      const item = imageAttachment(data);
-      if (
-        attachments.length >= 10 ||
-        attachments.reduce((total, item) => total + item.size, 0) + item.size >
-          24 * 1024 * 1024
-      ) {
-        notify("附件已达数量或大小限制");
-        return;
-      }
-      setAttachments((previous) => [...previous, item]);
+      await receiveAttachments(
+        [imageAttachment(data)],
+        "capture",
+        Date.now(),
+        token,
+      );
     }
     focusComposer();
   }
   entryHandler.current = async (entry) => {
     if (
-      ["translate", "screenshot-translate", "ask"].includes(entry.code || "")
+      ["translate", "screenshot-translate", "ask", "screenshot-ask"].includes(
+        entry.code || "",
+      )
     ) {
       const action = entry.code as QuickAction;
-      if (action === "screenshot-translate") {
+      if (action === "screenshot-translate" || action === "screenshot-ask") {
+        const token = attachmentIngress.current.token();
         const data =
           entry.type === "img" && typeof entry.payload === "string"
             ? entry.payload
-            : await bridge.captureScreen?.();
+            : await takeScreenshot();
+        if (token !== attachmentIngress.current.token()) return;
         if (data) sendQuick(action, "", [imageAttachment(data)]);
         return;
       }
@@ -988,10 +1093,11 @@ export default function App() {
       setDraft(entry.payload);
       focusComposer();
     } else if (entry.type === "img" && typeof entry.payload === "string") {
-      setAttachments((previous) => [
-        ...previous.slice(0, 9),
-        imageAttachment(entry.payload as string),
-      ]);
+      await receiveAttachments(
+        [imageAttachment(entry.payload)],
+        "host",
+        Date.now(),
+      );
       focusComposer();
     } else if (entry.type === "files")
       notify("请将文件拖入聊天或使用附件按钮添加。");
@@ -1000,15 +1106,15 @@ export default function App() {
   generateRef.current = generate;
   const retry = useCallback(
     (messageId: string) => {
-      if (sending.current) {
-        notify("请先停止当前生成");
-        return;
-      }
       const current = stateRef.current;
       const conversation = current.conversations.find(
         (c) => c.id === current.activeId,
       );
       if (!conversation) return;
+      if (sending.current.has(conversation.id)) {
+        notify("请先停止当前会话的生成");
+        return;
+      }
       const index = conversation.messages.findIndex((m) => m.id === messageId);
       if (index >= 0)
         void generateRef.current(
@@ -1020,17 +1126,17 @@ export default function App() {
   );
   const editMessage = useCallback(
     (messageId: string) => {
-      if (sending.current) {
-        notify("请先停止当前生成");
-        return;
-      }
       const current = stateRef.current;
       const conversation = current.conversations.find(
         (c) => c.id === current.activeId,
       );
-      const index =
-        conversation?.messages.findIndex((m) => m.id === messageId) ?? -1;
-      if (!conversation || index < 0) return;
+      if (!conversation) return;
+      if (sending.current.has(conversation.id)) {
+        notify("请先停止当前会话的生成");
+        return;
+      }
+      const index = conversation.messages.findIndex((m) => m.id === messageId);
+      if (index < 0) return;
       const message = conversation.messages[index];
       setDraft(message.content);
       setAttachments(message.attachments || []);
@@ -1148,8 +1254,8 @@ export default function App() {
           groups={state.conversationGroups}
           ungroupedCollapsed={state.ungroupedCollapsed}
           activeId={view === "chat" ? state.activeId : undefined}
-          runningId={streamConversation || undefined}
-          waiting={!!approval}
+          runningIds={runningIds}
+          waitingIds={waitingIds}
           onSelect={selectConversationId}
           onNew={newChat}
           onAction={organizeConversation}
@@ -1194,8 +1300,8 @@ export default function App() {
       organizeConversation,
       state.conversationGroups,
       state.ungroupedCollapsed,
-      streamConversation,
-      approval,
+      runningIds,
+      waitingIds,
       notify,
       settings.providers,
       openSettings,
@@ -1372,12 +1478,24 @@ export default function App() {
                   agentAvatar={settings.agentAvatar}
                 />
               ))}
-              {approval && streamConversation === active.id && (
+              {approval && (
                 <ApprovalCard
                   event={approval}
                   onApprove={(allow) => {
-                    bridge.approve(approval.id!, allow);
-                    setApproval(undefined);
+                    if (!approval.id) return;
+                    bridge.approve(approval.id, allow);
+                    setRuns((current) => {
+                      const run = current[active.id];
+                      if (
+                        run?.replyId !== streamId ||
+                        run.approval?.id !== approval.id
+                      )
+                        return current;
+                      return {
+                        ...current,
+                        [active.id]: { ...run, approval: undefined },
+                      };
+                    });
                   }}
                 />
               )}
@@ -1410,21 +1528,6 @@ export default function App() {
             <ArrowDown size={17} />
           </button>
         ) : null}
-        {busy && streamConversation !== state.activeId && (
-          <button
-            className="other-chat-status"
-            onClick={() => {
-              const c = state.conversations.find(
-                (c) => c.id === streamConversation,
-              );
-              if (c) selectConversation(c);
-            }}
-          >
-            <Loader2 size={13} className="spin" />
-            另一个对话正在生成，点击查看
-            <ChevronRight size={13} />
-          </button>
-        )}
         <Composer
           leading={
             !active &&
@@ -1459,7 +1562,9 @@ export default function App() {
             quickAction
               ? quickAction === "ask"
                 ? "AI 问答 · 粘贴即发送"
-                : `翻译为 ${languageName(settings.translationLanguage)} · 粘贴即发送`
+                : quickAction === "screenshot-ask"
+                  ? "截图问答 · 可输入补充问题后发送"
+                  : `翻译为 ${languageName(settings.translationLanguage)} · 粘贴即发送`
               : undefined
           }
           onCancelQuick={() => setQuickAction(undefined)}
@@ -1491,11 +1596,20 @@ export default function App() {
           onRemove={(key) =>
             setAttachments((a) => a.filter((x) => x.id !== key))
           }
-          onFiles={(files) => void addFiles(files)}
+          onFiles={(files, source) => void addFiles(files, source)}
+          onCapturePreferenceChange={(hideWindow) => {
+            update((s) => ({
+              ...s,
+              settings: { ...s.settings, screenshotHideWindow: hideWindow },
+            }));
+            void persist();
+          }}
           onSend={send}
           onStop={() => {
-            bridge.stop();
-            notify("已停止生成");
+            const cid = stateRef.current.activeId;
+            if (!cid || !sending.current.has(cid)) return;
+            bridge.stop(cid);
+            notify("已请求停止当前会话的生成");
           }}
           busy={busy}
           settings={settings}

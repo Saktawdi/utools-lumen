@@ -53,8 +53,8 @@ type Props = {
   groups: ConversationGroup[];
   ungroupedCollapsed?: boolean;
   activeId?: string;
-  runningId?: string;
-  waiting: boolean;
+  runningIds: ReadonlySet<string>;
+  waitingIds: ReadonlySet<string>;
   onSelect: (id: string) => void;
   onNew: (groupId?: string) => void;
   onAction: (action: ConversationAction) => boolean;
@@ -85,8 +85,8 @@ export default memo(
       conversations,
       groups,
       activeId,
-      runningId,
-      waiting,
+      runningIds,
+      waitingIds,
       onSelect,
       onNew,
       onAction,
@@ -308,11 +308,14 @@ export default memo(
           {c.color && c.pinned && (
             <Pin size={10} className="conversation-pin" />
           )}
-          {runningId === c.id && (
+          {runningIds.has(c.id) && (
             <Loader2
               size={12}
-              className={cx("spin", waiting && "conversation-waiting")}
-              aria-label={waiting ? "等待授权" : "正在回复"}
+              className={cx(
+                "spin",
+                waitingIds.has(c.id) && "conversation-waiting",
+              )}
+              aria-label={waitingIds.has(c.id) ? "等待授权" : "正在回复"}
             />
           )}
           {c.unread && (
@@ -422,6 +425,8 @@ export default memo(
             const members = pool.filter((c) => (c.groupId || "") === group.id);
             const pinned = members.filter((c) => c.pinned);
             const rest = members.filter((c) => !c.pinned);
+            const groupRunning = members.some((c) => runningIds.has(c.id));
+            const groupWaiting = members.some((c) => waitingIds.has(c.id));
             const grouped = !!groups.length;
             const highlighted = drop?.kind === "group" && drop.id === group.id;
             return (
@@ -499,10 +504,16 @@ export default memo(
                       )}
                       <span>{group.name}</span>
                       <small>{members.length}</small>
-                      {group.collapsed &&
-                        members.some((c) => c.id === runningId) && (
-                          <Loader2 size={11} className="spin" />
-                        )}
+                      {group.collapsed && groupRunning && (
+                        <Loader2
+                          size={11}
+                          className={cx(
+                            "spin",
+                            groupWaiting && "conversation-waiting",
+                          )}
+                          aria-label={groupWaiting ? "等待授权" : "正在回复"}
+                        />
+                      )}
                     </button>
                     {!archived && (
                       <IconButton
@@ -770,8 +781,8 @@ export default memo(
     a.groups === b.groups &&
     a.ungroupedCollapsed === b.ungroupedCollapsed &&
     a.activeId === b.activeId &&
-    a.runningId === b.runningId &&
-    a.waiting === b.waiting &&
+    a.runningIds === b.runningIds &&
+    a.waitingIds === b.waitingIds &&
     a.onSelect === b.onSelect &&
     a.onNew === b.onNew &&
     a.onAction === b.onAction &&

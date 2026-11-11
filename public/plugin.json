@@ -2,7 +2,7 @@
   "pluginName": "Lumen · 流明",
   "name": "lumen-local-chat",
   "description": "轻量、精致的 BYOK Agent 聊天空间。图片、模型、工具与灵感，自由连接。",
-  "version": "0.2.5",
+  "version": "0.2.8",
   "author": "Saktawdi",
   "main": "index.html",
   "preload": "preload.js",
@@ -39,6 +39,15 @@
       "code": "ask",
       "explain": "用默认 Agent 回答选中文字",
       "cmds": ["AI问答", "ai ask", { "type": "over", "label": "AI问答" }]
+    },
+    {
+      "code": "screenshot-ask",
+      "explain": "用默认 Agent 回答截图内容，截图同时复制到剪贴板",
+      "cmds": [
+        "AI截图问答",
+        "ai screenshot ask",
+        { "type": "img", "label": "AI截图问答" }
+      ]
     }
   ]
 }

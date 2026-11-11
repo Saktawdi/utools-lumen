@@ -44,6 +44,32 @@ test("managed translation languages add, deduplicate, and keep a valid default a
   assert.deepEqual(removeTranslationLanguage(last, "cn"), last);
   assert.deepEqual(initial.translationLanguages, ["cn", "en"]);
 });
+test("release metadata uses the same version in package, lockfile and plugin manifest", () => {
+  const packageInfo = require("../package.json");
+  const lock = require("../package-lock.json");
+  const manifest = require("../public/plugin.json");
+  assert.match(packageInfo.version, /^\d+\.\d+\.\d+$/);
+  assert.equal(lock.version, packageInfo.version);
+  assert.equal(lock.packages[""].version, packageInfo.version);
+  assert.equal(manifest.version, packageInfo.version);
+});
+test("screenshot ask is registered for command and image entry without translation instructions", () => {
+  const manifest = require("../public/plugin.json");
+  const feature = manifest.features.find((f) => f.code === "screenshot-ask");
+  assert.ok(feature);
+  assert.ok(feature.cmds.includes("AI截图问答"));
+  assert.ok(feature.cmds.includes("ai screenshot ask"));
+  assert.ok(
+    feature.cmds.some(
+      (cmd) => cmd.type === "img" && cmd.label === "AI截图问答",
+    ),
+  );
+  const request = quickRequest("screenshot-ask", "请解释报错", "ja");
+  assert.equal(request.title, "截图问答");
+  assert.match(request.prompt, /截图/);
+  assert.match(request.prompt, /请解释报错/);
+  assert.doesNotMatch(request.prompt, /翻译|只输出译文/);
+});
 test("quick commands preserve selected content, resolve cn and custom target languages, and distinguish image requests", () => {
   const text = "Hello\nWorld";
   const translation = quickRequest("translate", text);

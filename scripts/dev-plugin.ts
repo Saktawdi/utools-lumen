@@ -100,12 +100,17 @@ export function lumenBridge(): Plugin {
             res.setHeader("Content-Type", "application/x-ndjson");
             res.setHeader("Cache-Control", "no-store");
             res.flushHeaders();
+            const disconnected = new AbortController();
             res.on("close", () => {
-              if (!res.writableEnded) core.stop();
+              if (!res.writableEnded) disconnected.abort();
             });
             try {
-              await core.chat(args, (event: unknown) =>
-                res.write(JSON.stringify(event) + "\n"),
+              await core.chat(
+                args,
+                (event: unknown) => {
+                  if (!res.destroyed) res.write(JSON.stringify(event) + "\n");
+                },
+                disconnected.signal,
               );
             } catch (e) {
               res.write(
@@ -181,7 +186,7 @@ export function lumenBridge(): Plugin {
               value = await core.searchTest(args.config, args.query);
               break;
             case "stop":
-              core.stop();
+              core.stop(args.conversationId);
               break;
             case "approve":
               core.approve(args.id, args.allow);

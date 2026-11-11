@@ -36,7 +36,7 @@ window.lumen = {
       await fs.promises.writeFile(file, Buffer.from(match[2], "base64"));
   },
   chat: (args, onEvent) => core.chat(args, onEvent),
-  stop: () => core.stop(),
+  stop: (conversationId) => core.stop(conversationId),
   approve: (id, allow) => core.approve(id, allow),
   setToolPermission: async (mode) => core.setToolPermission(mode),
   conversationResult: async (id, result, error) =>
@@ -65,14 +65,15 @@ window.lumen = {
   openExternal: (url) => {
     if (/^https?:\/\//i.test(url)) utools.shellOpenExternal(url);
   },
-  captureScreen: async () => {
-    utools.hideMainWindow();
+  captureScreen: async (options = {}) => {
+    const hideWindow = options.hideWindow !== false;
+    if (hideWindow) utools.hideMainWindow();
     try {
       const image = await utools.screenCapture();
       if (image) utools.copyImage(image);
       return image || null;
     } finally {
-      utools.showMainWindow();
+      if (hideWindow) utools.showMainWindow();
     }
   },
   onEnter: (fn) => {

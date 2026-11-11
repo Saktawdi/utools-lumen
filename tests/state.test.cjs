@@ -15,6 +15,41 @@ compiled.filename = path.join(__dirname, "state-bundle.cjs");
 compiled._compile(bundled, compiled.filename);
 const { mergeState, importBackup, exportBackup, parseSkin, agentSettings } =
   compiled.exports;
+test("screenshot window preference defaults to hiding, persists false and validates imports", () => {
+  assert.equal(mergeState(null).settings.screenshotHideWindow, true);
+  assert.equal(
+    mergeState({ settings: {} }).settings.screenshotHideWindow,
+    true,
+  );
+  assert.equal(
+    mergeState({ settings: { screenshotHideWindow: "false" } }).settings
+      .screenshotHideWindow,
+    true,
+  );
+  const state = workspace();
+  state.settings.screenshotHideWindow = false;
+  const backup = exportBackup(state, false);
+  const restored = importBackup(
+    JSON.parse(JSON.stringify(backup)),
+    workspace(),
+  ).state;
+  assert.equal(restored.settings.screenshotHideWindow, false);
+  assert.equal(mergeState(restored).settings.screenshotHideWindow, false);
+  assert.equal(
+    importBackup({ providers: [] }, state).state.settings.screenshotHideWindow,
+    false,
+  );
+  for (const invalid of ["false", 0, null])
+    assert.throws(
+      () =>
+        importBackup(
+          { settings: { providers: [], screenshotHideWindow: invalid } },
+          state,
+        ),
+      /截图/,
+    );
+  assert.equal(state.settings.screenshotHideWindow, false);
+});
 function workspace() {
   return mergeState({
     settings: {
@@ -165,6 +200,121 @@ test("malformed imports fail atomically instead of replacing live providers or c
     },
   ])
     assert.throws(() => importBackup(raw, original));
+  assert.deepEqual(original, snapshot);
+});
+test("tool rounds default to unlimited and normalize corrupt legacy preferences", () => {
+  assert.equal(mergeState(null).settings.toolRoundLimit, 0);
+  assert.equal(workspace().settings.toolRoundLimit, 0);
+  for (const value of [undefined, null, "8", -1, 1.5, NaN, Infinity, 2 ** 53]) {
+    const state = mergeState({ settings: { toolRoundLimit: value } });
+    assert.equal(state.settings.toolRoundLimit, 0);
+  }
+  for (const value of [0, 1, 8, 1000, Number.MAX_SAFE_INTEGER]) {
+    const state = mergeState({ settings: { toolRoundLimit: value } });
+    assert.equal(state.settings.toolRoundLimit, value);
+  }
+});
+test("tool round limits import explicitly, reject invalid values atomically and survive backup", () => {
+  const original = workspace();
+  original.settings.toolRoundLimit = 12;
+  const snapshot = structuredClone(original);
+  for (const value of [undefined, null, "8", -1, 1.5, NaN, Infinity, 2 ** 53]) {
+    assert.throws(
+      () =>
+        importBackup(
+          { providers: [], settings: { toolRoundLimit: value } },
+          original,
+        ),
+      /工具调用轮次上限/,
+    );
+  }
+  for (const value of [0, 8, 30, Number.MAX_SAFE_INTEGER]) {
+    const restored = importBackup(
+      { providers: [], settings: { toolRoundLimit: value } },
+      original,
+    ).state;
+    assert.equal(restored.settings.toolRoundLimit, value);
+  }
+  for (const raw of [[], { providers: [] }, { settings: { providers: [] } }])
+    assert.equal(importBackup(raw, original).state.settings.toolRoundLimit, 12);
+  const restored = importBackup(
+    exportBackup(original, false),
+    workspace(),
+  ).state;
+  assert.equal(restored.settings.toolRoundLimit, 12);
+  assert.deepEqual(original, snapshot);
+});
+test("backups preserve ordered agent context, native signatures and tool-limit pauses", () => {
+  const original = workspace();
+  const context = [
+    {
+      role: "assistant",
+      content: "先计算",
+      tool_calls: [
+        { id: "call-1", name: "calculate", arguments: '{"expression":"2+2"}' },
+      ],
+      nativeAnthropic: [
+        { type: "thinking", thinking: "reason", signature: "anth-signed" },
+      ],
+      nativeGoogle: [
+        {
+          functionCall: { name: "calculate", args: { expression: "2+2" } },
+          thoughtSignature: "google-signed",
+        },
+      ],
+      nativeResponses: [
+        {
+          type: "reasoning",
+          encrypted_content: "responses-encrypted",
+          summary: [],
+        },
+      ],
+    },
+    {
+      role: "tool",
+      content: '{"result":4}',
+      tool_call_id: "call-1",
+      tool_name: "calculate",
+    },
+  ];
+  original.settings.toolRoundLimit = 1;
+  original.conversations[0].messages.push({
+    id: "reply-1",
+    role: "assistant",
+    content: "先计算",
+    createdAt: 2,
+    toolLimit: 1,
+    agentContext: context,
+    tools: [
+      {
+        id: "call-1",
+        name: "calculate",
+        arguments: '{"expression":"2+2"}',
+        status: "done",
+        result: { result: 4 },
+      },
+    ],
+  });
+  const snapshot = structuredClone(original);
+  for (const restored of [
+    mergeState(JSON.parse(JSON.stringify(original))),
+    importBackup(
+      JSON.parse(JSON.stringify(exportBackup(original, false))),
+      workspace(),
+    ).state,
+    importBackup(
+      JSON.parse(JSON.stringify(exportBackup(original, true))),
+      workspace(),
+    ).state,
+  ]) {
+    const reply = restored.conversations[0].messages.find(
+      (message) => message.id === "reply-1",
+    );
+    assert.deepEqual(reply.agentContext, context);
+    assert.equal(reply.toolLimit, 1);
+    assert.deepEqual(reply.tools, original.conversations[0].messages[1].tools);
+    assert.equal(restored.settings.toolRoundLimit, 1);
+  }
   assert.deepEqual(original, snapshot);
 });
 test("tool permission defaults to prompt for old data and survives backup restoration", () => {

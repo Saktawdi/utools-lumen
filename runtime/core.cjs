@@ -34,35 +34,170 @@ function cleanError(error, settings) {
     if (key) text = text.split(key).join("[密钥已隐藏]");
   return text;
 }
+function toolOutput(value) {
+  return (JSON.stringify(value) ?? "null").slice(0, 50000);
+}
+function interruptedTool(call) {
+  return {
+    role: "tool",
+    content: toolOutput({
+      error: "工具调用已中断，未获得结果；如有外部操作，请先确认其状态。",
+    }),
+    tool_call_id: call.id,
+    tool_name: call.name,
+  };
+}
+function completeContext(context, tools = []) {
+  const result = [];
+  const pending = new Map();
+  const knownResults = new Map(
+    tools
+      .filter(
+        (call) =>
+          call && call.result !== undefined && call.status !== "running",
+      )
+      .map((call) => [call.id, call]),
+  );
+  const finishPending = () => {
+    for (const call of pending.values()) {
+      const known = knownResults.get(call.id);
+      result.push(
+        known && known.name === call.name
+          ? {
+              role: "tool",
+              content: toolOutput(known.result),
+              tool_call_id: call.id,
+              tool_name: call.name,
+            }
+          : interruptedTool(call),
+      );
+    }
+    pending.clear();
+  };
+  for (const raw of context) {
+    if (!raw || typeof raw !== "object") continue;
+    if (raw.role === "assistant") {
+      finishPending();
+      const calls = (
+        Array.isArray(raw.tool_calls) ? raw.tool_calls : []
+      ).filter(
+        (c) =>
+          c &&
+          typeof c.id === "string" &&
+          typeof c.name === "string" &&
+          typeof c.arguments === "string",
+      );
+      const message = {
+        role: "assistant",
+        content: typeof raw.content === "string" ? raw.content : "",
+        ...(calls.length
+          ? {
+              tool_calls: calls.map(({ id, name, arguments: args }) => ({
+                id,
+                name,
+                arguments: args,
+              })),
+            }
+          : {}),
+      };
+      for (const key of ["nativeAnthropic", "nativeResponses", "nativeGoogle"])
+        if (Array.isArray(raw[key])) message[key] = structuredClone(raw[key]);
+      result.push(message);
+      for (const call of calls) pending.set(call.id, call);
+    } else if (raw.role === "tool" && pending.has(raw.tool_call_id)) {
+      const call = pending.get(raw.tool_call_id);
+      result.push({
+        role: "tool",
+        content: typeof raw.content === "string" ? raw.content : "null",
+        tool_call_id: call.id,
+        tool_name: call.name,
+      });
+      pending.delete(call.id);
+    }
+  }
+  finishPending();
+  return result;
+}
 function wireMessages(messages, systemPrompt) {
   return [
     { role: "system", content: systemPrompt },
-    ...messages
-      .filter((m) => !m.error)
-      .map((m) => ({
-        role: m.role,
-        content:
-          m.content +
-          (m.attachments || [])
-            .filter((x) => x.type === "text")
-            .map(
-              (a) =>
-                `\n\n<user_attachment id="${a.id}" name=${JSON.stringify(a.name)}>\n${a.data.slice(0, 24000)}\n</user_attachment>`,
-            )
-            .join(""),
-        images: (m.attachments || [])
-          .filter((x) => x.type === "image")
-          .map((x) => x.data),
-      })),
+    ...messages.flatMap((m) => {
+      if (m.role === "assistant") {
+        if (Array.isArray(m.agentContext) && m.agentContext.length) {
+          const context = completeContext(m.agentContext, m.tools || []);
+          const represented = context
+            .filter((x) => x.role === "assistant")
+            .map((x) => x.content)
+            .join("");
+          // Keep text streamed before an interrupted provider response, without duplicating completed rounds.
+          const remainder = (m.content || "").startsWith(represented)
+            ? (m.content || "").slice(represented.length)
+            : "";
+          return [
+            ...context,
+            ...(remainder ? [{ role: "assistant", content: remainder }] : []),
+          ];
+        }
+        // Older histories have only flat tool cards. Recover their results even if the reply ended in an error.
+        const context = [];
+        for (const call of m.tools || []) {
+          if (
+            !call ||
+            typeof call.id !== "string" ||
+            typeof call.name !== "string" ||
+            typeof call.arguments !== "string"
+          )
+            continue;
+          context.push({
+            role: "assistant",
+            content: "",
+            tool_calls: [
+              { id: call.id, name: call.name, arguments: call.arguments },
+            ],
+          });
+          context.push(
+            call.result === undefined
+              ? interruptedTool(call)
+              : {
+                  role: "tool",
+                  content: toolOutput(call.result),
+                  tool_call_id: call.id,
+                  tool_name: call.name,
+                },
+          );
+        }
+        if (m.content) context.push({ role: "assistant", content: m.content });
+        return context;
+      }
+      if (m.role !== "user") return [];
+      return [
+        {
+          role: "user",
+          content:
+            (m.content || "") +
+            (m.attachments || [])
+              .filter((x) => x.type === "text")
+              .map(
+                (a) =>
+                  `\n\n<user_attachment id="${a.id}" name=${JSON.stringify(a.name)}>\n${a.data.slice(0, 24000)}\n</user_attachment>`,
+              )
+              .join(""),
+          images: (m.attachments || [])
+            .filter((x) => x.type === "image")
+            .map((x) => x.data),
+        },
+      ];
+    }),
   ];
 }
 class Core {
   constructor(options = {}) {
     this.store = options.store || new LocalStore(options.directory);
-    this.controller = null;
+    this.controllers = new Map();
     this.approvals = new Map();
     this.conversationActions = new Map();
-    this.toolPermission = "prompt";
+    // Explicit UI changes override request snapshots; a delayed request must never reset current permission.
+    this.toolPermission = null;
     this.extraTools = [];
     this.catalogPromise = null;
     this.ledger = new UsageLedger(this.store);
@@ -204,9 +339,15 @@ class Core {
       throw new Error(cleanError(e, { search: config }));
     }
   }
-  stop() {
-    this.controller?.abort();
-    for (const id of this.approvals.keys()) this.approve(id, false);
+  stop(conversationId) {
+    for (const [id, controller] of this.controllers)
+      if (conversationId === undefined || id === conversationId)
+        this.cancelRun(controller);
+  }
+  cancelRun(controller) {
+    controller.abort();
+    for (const [id, approval] of this.approvals)
+      if (approval.controller === controller) this.approve(id, false);
   }
   approve(id, allow) {
     const approval = this.approvals.get(id);
@@ -256,13 +397,24 @@ class Core {
       }
     });
   }
-  async chat(args, onEvent) {
-    if (this.controller) throw new Error("已有请求正在运行");
+  async chat(args, onEvent, externalSignal) {
+    const runId = args.conversationId || crypto.randomUUID();
+    if (this.controllers.has(runId))
+      throw new Error("当前会话已有请求正在运行");
     const controller = new AbortController();
-    this.controller = controller;
+    this.controllers.set(runId, controller);
     const signal = controller.signal;
+    const aborted = () => this.cancelRun(controller);
+    externalSignal?.addEventListener("abort", aborted, { once: true });
+    if (externalSignal?.aborted) aborted();
     const { provider, model, config, settings } = args;
-    this.toolPermission =
+    const context = [];
+    const remember = (message, messages) => {
+      messages.push(message);
+      context.push(message);
+      onEvent({ type: "context", context: structuredClone(context) });
+    };
+    const initialPermission =
       settings.toolPermission === "always_allow" ? "always_allow" : "prompt";
     try {
       const registry = this.registry(settings);
@@ -280,7 +432,13 @@ class Core {
           ? args.effort
           : provider.defaultEffort;
       let totalUsage = { input: 0, output: 0 };
-      for (let step = 0; step < 8; step++) {
+      const limit =
+        Number.isSafeInteger(settings.toolRoundLimit) &&
+        settings.toolRoundLimit > 0
+          ? settings.toolRoundLimit
+          : 0;
+      let toolRounds = 0;
+      while (true) {
         signal.throwIfAborted();
         const built = buildRequest(
           provider,
@@ -377,17 +535,30 @@ class Core {
         if (!result.calls.length) {
           if (!result.text && !result.reasoning)
             throw new Error("模型返回了空响应，请检查模型协议或额度");
+          remember(
+            {
+              role: "assistant",
+              content: result.text,
+              nativeAnthropic: result.nativeAnthropic,
+              nativeResponses: result.nativeResponses,
+              nativeGoogle: result.nativeGoogle,
+            },
+            messages,
+          );
           onEvent({ type: "done" });
           return;
         }
-        messages.push({
-          role: "assistant",
-          content: result.text,
-          tool_calls: result.calls,
-          nativeAnthropic: result.nativeAnthropic,
-          nativeResponses: result.nativeResponses,
-          nativeGoogle: result.nativeGoogle,
-        });
+        remember(
+          {
+            role: "assistant",
+            content: result.text,
+            tool_calls: result.calls,
+            nativeAnthropic: result.nativeAnthropic,
+            nativeResponses: result.nativeResponses,
+            nativeGoogle: result.nativeGoogle,
+          },
+          messages,
+        );
         for (const call of result.calls) {
           signal.throwIfAborted();
           const start = Date.now();
@@ -474,22 +645,37 @@ class Core {
                 };
               },
               approve: (name, args) => {
-                if (this.toolPermission === "always_allow")
-                  return Promise.resolve(!signal.aborted);
+                if (signal.aborted) return Promise.resolve(false);
+                if (
+                  (this.toolPermission ?? initialPermission) === "always_allow"
+                )
+                  return Promise.resolve(true);
                 return new Promise((resolve) => {
                   const id = crypto.randomUUID();
-                  this.approvals.set(id, { resolve, onEvent });
+                  this.approvals.set(id, { resolve, onEvent, controller });
                   onEvent({ type: "approval", id, name, args });
                 });
               },
             });
-            signal.throwIfAborted();
           } catch (e) {
-            if (signal.aborted) throw e;
             status = "error";
-            value = { error: cleanError(e, settings) };
+            value = {
+              error: signal.aborted
+                ? "工具执行已中断，请先确认外部操作的状态。"
+                : cleanError(e, settings),
+            };
           }
-          const rendered = JSON.stringify(value) ?? "null";
+          const rendered = toolOutput(value);
+          // Checkpoint the protocol result before updating the display card, even if the stream disconnects between events.
+          remember(
+            {
+              role: "tool",
+              content: rendered,
+              tool_call_id: call.id,
+              tool_name: call.name,
+            },
+            messages,
+          );
           onEvent({
             type: "tool-result",
             call: {
@@ -499,26 +685,28 @@ class Core {
               duration: Date.now() - start,
             },
           });
-          messages.push({
-            role: "tool",
-            content: rendered.slice(0, 50000),
-            tool_call_id: call.id,
-            tool_name: call.name,
-          });
+          signal.throwIfAborted();
+        }
+        toolRounds++;
+        if (limit && toolRounds >= limit) {
+          onEvent({ type: "done", reason: "tool-limit", limit });
+          return;
         }
       }
-      throw new Error(
-        "本次已执行 8 轮工具调用。你可以继续追问，以便完成后续步骤。",
-      );
     } catch (error) {
+      if (context.length)
+        onEvent({ type: "context", context: completeContext(context) });
       if (signal.aborted) {
         onEvent({ type: "done", text: "stopped" });
         return;
       }
       throw new Error(cleanError(error, settings));
     } finally {
-      this.controller = null;
-      for (const id of this.approvals.keys()) this.approve(id, false);
+      externalSignal?.removeEventListener("abort", aborted);
+      if (this.controllers.get(runId) === controller)
+        this.controllers.delete(runId);
+      for (const [id, approval] of this.approvals)
+        if (approval.controller === controller) this.approve(id, false);
     }
   }
 }

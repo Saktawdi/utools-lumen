@@ -305,6 +305,14 @@ export const MessageView = memo(function MessageView({
               </div>
             </div>
           )}
+          {m.toolLimit !== undefined && (
+            <div className="interrupted" role="status">
+              <strong>已到 {m.toolLimit} 轮工具调用上限，已暂停。</strong>
+              <p>
+                已有结果已保留。继续发送消息即可接着处理，也可在工具管理中调整上限。
+              </p>
+            </div>
+          )}
           {m.interrupted && <span className="interrupted">已停止生成</span>}
         </div>
         {!streaming && (
@@ -468,6 +476,14 @@ export function ToolsPopover({
 function PlusIcon() {
   return <span className="plus-text">+</span>;
 }
+export function clipboardFiles(data: DataTransfer): File[] {
+  // items and files are two views of the same clipboard payload; never concatenate them.
+  const items = Array.from(data.items || [])
+    .filter((item) => item.kind === "file")
+    .map((item) => item.getAsFile())
+    .filter((file): file is File => file !== null);
+  return [...new Set(items.length ? items : Array.from(data.files || []))];
+}
 export function Composer({
   leading,
   draft,
@@ -476,6 +492,7 @@ export function Composer({
   onRemove,
   onFiles,
   onCapture,
+  onCapturePreferenceChange,
   onPasteText,
   quickLabel,
   onCancelQuick,
@@ -503,8 +520,9 @@ export function Composer({
   setDraft: (t: string) => void;
   attachments: Attachment[];
   onRemove: (id: string) => void;
-  onFiles: (files: File[]) => void;
+  onFiles: (files: File[], source?: "paste") => void;
   onCapture: () => void;
+  onCapturePreferenceChange: (hideWindow: boolean) => void;
   onPasteText: (text: string) => boolean;
   quickLabel?: string;
   leading?: ReactNode;
@@ -532,6 +550,22 @@ export function Composer({
   const textarea = useRef<HTMLTextAreaElement>(null);
   const fileRef = useRef<HTMLInputElement>(null);
   const imageRef = useRef<HTMLInputElement>(null);
+  const handledPastes = useRef(new WeakSet<Event>());
+  const [captureMenu, setCaptureMenu] = useState(false);
+  const captureAnchor = usePopoverDismiss<HTMLDivElement>(captureMenu, () =>
+    setCaptureMenu(false),
+  );
+  const openCaptureMenu = () => {
+    setCaptureMenu(true);
+    setReasoning(false);
+    setToolsOpen(false);
+  };
+  useEffect(() => {
+    if (captureMenu)
+      captureAnchor.current
+        ?.querySelector<HTMLButtonElement>('[aria-checked="true"]')
+        ?.focus();
+  }, [captureMenu]);
   const [reasoning, setReasoning] = useState(false);
   const reasoningAnchor = usePopoverDismiss<HTMLDivElement>(reasoning, () =>
     setReasoning(false),
@@ -618,12 +652,20 @@ export function Composer({
           value={draft}
           onChange={(e) => setDraft(e.target.value)}
           onPaste={(e) => {
-            const files = [...e.clipboardData.files];
+            if (handledPastes.current.has(e.nativeEvent)) {
+              e.preventDefault();
+              e.stopPropagation();
+              return;
+            }
+            handledPastes.current.add(e.nativeEvent);
+            const files = clipboardFiles(e.clipboardData);
             if (files.length) {
               e.preventDefault();
-              onFiles(files);
+              e.stopPropagation();
+              onFiles(files, "paste");
             } else if (onPasteText(e.clipboardData.getData("text/plain"))) {
               e.preventDefault();
+              e.stopPropagation();
             }
           }}
           onKeyDown={(e) => {
@@ -656,14 +698,104 @@ export function Composer({
               <ImagePlus size={14} />
               <span>图片</span>
             </button>
-            <button
-              className="composer-pill"
-              title="框选截图并复制到剪贴板"
-              onClick={onCapture}
-            >
-              <ScanLine size={14} />
-              <span>截图</span>
-            </button>
+            <div ref={captureAnchor} className="popover-anchor">
+              <button
+                className="composer-pill capture-trigger"
+                title={`框选截图并复制到剪贴板；当前${settings.screenshotHideWindow ? "隐藏窗口" : "不隐藏窗口"}，右键可切换`}
+                aria-label="截图（右键设置截图偏好）"
+                aria-haspopup="menu"
+                aria-expanded={captureMenu}
+                onClick={() => {
+                  setCaptureMenu(false);
+                  onCapture();
+                }}
+                onContextMenu={(e) => {
+                  e.preventDefault();
+                  e.stopPropagation();
+                  openCaptureMenu();
+                }}
+                onKeyDown={(e) => {
+                  if (
+                    e.key === "ContextMenu" ||
+                    (e.key === "F10" && e.shiftKey)
+                  ) {
+                    e.preventDefault();
+                    openCaptureMenu();
+                  }
+                }}
+              >
+                <ScanLine size={14} />
+                <span>截图</span>
+              </button>
+              {captureMenu && (
+                <div
+                  className="popover capture-preferences"
+                  role="menu"
+                  aria-label="截图偏好"
+                  onKeyDown={(e) => {
+                    if (e.key === "Escape") {
+                      e.preventDefault();
+                      setCaptureMenu(false);
+                      captureAnchor.current
+                        ?.querySelector<HTMLButtonElement>(".capture-trigger")
+                        ?.focus();
+                      return;
+                    }
+                    if (
+                      !["ArrowUp", "ArrowDown", "Home", "End"].includes(e.key)
+                    )
+                      return;
+                    e.preventDefault();
+                    const buttons = [
+                      ...e.currentTarget.querySelectorAll<HTMLButtonElement>(
+                        '[role="menuitemradio"]',
+                      ),
+                    ];
+                    const index = buttons.indexOf(
+                      document.activeElement as HTMLButtonElement,
+                    );
+                    buttons[
+                      e.key === "Home"
+                        ? 0
+                        : e.key === "End"
+                          ? buttons.length - 1
+                          : (index +
+                              (e.key === "ArrowDown"
+                                ? 1
+                                : buttons.length - 1)) %
+                            buttons.length
+                    ]?.focus();
+                  }}
+                >
+                  <div className="capture-preferences-title">截图偏好</div>
+                  {[true, false].map((hideWindow) => (
+                    <button
+                      key={String(hideWindow)}
+                      role="menuitemradio"
+                      aria-checked={
+                        settings.screenshotHideWindow === hideWindow
+                      }
+                      onClick={() => {
+                        onCapturePreferenceChange(hideWindow);
+                        setCaptureMenu(false);
+                        captureAnchor.current
+                          ?.querySelector<HTMLButtonElement>(".capture-trigger")
+                          ?.focus();
+                      }}
+                    >
+                      <span>
+                        {hideWindow ? "截图时隐藏窗口" : "截图时不隐藏窗口"}
+                      </span>
+                      <span className="capture-preferences-check">
+                        {settings.screenshotHideWindow === hideWindow && (
+                          <Check size={14} />
+                        )}
+                      </span>
+                    </button>
+                  ))}
+                </div>
+              )}
+            </div>
             <div className="popover-anchor">
               <button
                 className={cx("composer-pill", toolsOpen && "active")}

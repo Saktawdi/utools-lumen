@@ -101,6 +101,7 @@ try {
     );
   assert.equal(typeof window.lumen.conversationResult, "function");
   await window.lumen.conversationResult("expired-request", { success: true });
+  await window.lumen.setToolPermission("always_allow");
   const conversationCalls = [
     ["get_current_conversation", {}],
     ["list_conversation_groups", {}],
@@ -203,15 +204,27 @@ try {
   });
   assert.equal(await window.lumen.captureScreen(), captureResult);
   assert.deepEqual(calls.splice(0), ["hide", "capture", "copy", "show"]);
+  assert.equal(
+    await window.lumen.captureScreen({ hideWindow: false }),
+    captureResult,
+  );
+  assert.deepEqual(calls.splice(0), ["capture", "copy"]);
   captureResult = "";
   assert.equal(await window.lumen.captureScreen(), null);
   assert.deepEqual(calls.splice(0), ["hide", "capture", "show"]);
+  assert.equal(await window.lumen.captureScreen({ hideWindow: false }), null);
+  assert.deepEqual(calls.splice(0), ["capture"]);
   utools.screenCapture = async () => {
     throw new Error("cancelled");
   };
   await assert.rejects(window.lumen.captureScreen(), /cancelled/);
   assert.deepEqual(calls, ["hide", "show"]);
   calls.splice(0);
+  await assert.rejects(
+    window.lumen.captureScreen({ hideWindow: false }),
+    /cancelled/,
+  );
+  assert.deepEqual(calls, []);
   assert.deepEqual(await window.lumen.imageJobs(), []);
   assert.equal(typeof window.lumen.imageGenerate, "function");
   const imageId = "native-image-test";

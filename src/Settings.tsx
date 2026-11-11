@@ -32,7 +32,12 @@ import ReasoningLevelsInput from "./ReasoningLevelsInput";
 import TranslationLanguages from "./TranslationLanguages";
 import { newProvider } from "./defaults";
 import { matchModel } from "./model-catalog";
-import { exportBackup, importBackup, parseCustomTool } from "./state-data";
+import {
+  exportBackup,
+  importBackup,
+  parseCustomTool,
+  parseToolRoundLimit,
+} from "./state-data";
 import type {
   AppState,
   ModelConfig,
@@ -1085,6 +1090,22 @@ function ToolSettings({
   notify: (t: string) => void;
 }) {
   const [adding, setAdding] = useState(false);
+  const [roundLimit, setRoundLimit] = useState(String(settings.toolRoundLimit));
+  useEffect(() => {
+    setRoundLimit(String(settings.toolRoundLimit));
+  }, [settings.toolRoundLimit]);
+  const saveRoundLimit = () => {
+    try {
+      if (!roundLimit.trim())
+        throw new Error("请输入工具调用轮次上限，0 表示不限制");
+      const value = parseToolRoundLimit(Number(roundLimit));
+      update({ toolRoundLimit: value });
+      setRoundLimit(String(value));
+    } catch (error) {
+      setRoundLimit(String(settings.toolRoundLimit));
+      notify((error as Error).message);
+    }
+  };
   const [raw, setRaw] = useState(
     JSON.stringify(
       {
@@ -1110,6 +1131,34 @@ function ToolSettings({
     <div className="settings-section">
       <p className="section-description">
         按需开启能力。Agent 可以通过 list_tools 发现已注册工具。
+      </p>
+      <Field
+        label="工具调用轮次上限"
+        hint={
+          settings.toolRoundLimit === 0
+            ? "当前：不限制。0 表示不限制；输入非负整数后离开输入框即可保存。"
+            : `当前：每次生成最多 ${settings.toolRoundLimit} 轮。0 表示不限制。`
+        }
+      >
+        <input
+          aria-label="工具调用轮次上限"
+          type="number"
+          min="0"
+          step="1"
+          value={roundLimit}
+          onChange={(event) => setRoundLimit(event.target.value)}
+          onBlur={saveRoundLimit}
+          onKeyDown={(event) => {
+            if (event.key === "Enter") {
+              event.preventDefault();
+              event.currentTarget.blur();
+            }
+          }}
+        />
+      </Field>
+      <p className="sub-description">
+        默认不限制。一轮可能同时调用多个工具；达到上限后会保留已有工具结果并暂停，
+        发送「继续」可接着处理，也可调整上限后继续。
       </p>
       {groups.map((group) => (
         <div className="tool-settings-group" key={group}>

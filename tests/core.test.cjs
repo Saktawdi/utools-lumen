@@ -11,7 +11,7 @@ const { buildRequest, createCollector } = require("../runtime/adapters.cjs");
 const { withKeys, webSearch } = require("../runtime/search.cjs");
 const { builtins, addCustom, calculate } = require("../runtime/tools.cjs");
 const { LocalStore } = require("../runtime/storage.cjs");
-const { Core, cleanError } = require("../runtime/core.cjs");
+const { Core, cleanError, wireMessages } = require("../runtime/core.cjs");
 const { matchModel, flattenCatalog } = require("../runtime/catalog.cjs");
 
 test("nonstream Chat responses preserve multiple tool calls without collapsing indexes", () => {
@@ -97,7 +97,7 @@ test("registry failure releases the request lock and developer registrations val
     ),
     /已存在/,
   );
-  assert.equal(core.controller, null);
+  assert.equal(core.controllers.size, 0);
 });
 
 test("model listing and search errors redact custom authentication values", async (t) => {
@@ -613,7 +613,7 @@ test("stopping a pending approval cannot be undone by a late Auto switch or appr
     },
   );
   assert.deepEqual(executed, []);
-  assert.equal(core.controller, null);
+  assert.equal(core.controllers.size, 0);
   assert.equal(core.approvals.size, 0);
   assert.ok(
     events.some((event) => event.type === "done" && event.text === "stopped"),
@@ -696,7 +696,652 @@ test("agent loop executes real tools, sends tool results upstream and accumulate
     events.find((e) => e.type === "tool-result").call.status,
     "done",
   );
-  assert.equal(core.controller, null);
+  assert.equal(core.controllers.size, 0);
+});
+test("unlimited default executes more than eight tool rounds and receives the final answer", async (t) => {
+  const requests = [];
+  const url = await server(t, async (req, res) => {
+    const body = await json(req);
+    requests.push(body);
+    const rounds = body.messages.filter((m) => m.role === "tool").length;
+    res.setHeader("Content-Type", "application/json");
+    res.end(
+      JSON.stringify({
+        choices: [
+          {
+            message:
+              rounds < 12
+                ? {
+                    tool_calls: [
+                      {
+                        id: `round-${rounds}`,
+                        function: {
+                          name: "calculate",
+                          arguments: '{"expression":"2+2"}',
+                        },
+                      },
+                    ],
+                  }
+                : { content: "十二轮结果全部已知" },
+          },
+        ],
+      }),
+    );
+  });
+  const core = new Core({ directory: temporary(t) });
+  const events = [];
+  await core.chat(
+    {
+      provider: { ...provider, baseURL: url + "/v1" },
+      model: "test",
+      config: {},
+      settings,
+      conversationId: "unlimited",
+      messages: [{ role: "user", content: "执行十二轮" }],
+    },
+    (e) => events.push(e),
+  );
+  assert.equal(requests.length, 13);
+  assert.equal(events.filter((e) => e.type === "tool-result").length, 12);
+  assert.equal(events.at(-1).type, "done");
+  assert.equal(events.at(-1).reason, undefined);
+  assert.equal(
+    events.find((e) => e.type === "context").context.length,
+    1,
+    "earlier snapshots remain immutable",
+  );
+  assert.equal(core.controllers.size, 0);
+});
+test("finite limits pause normally and persisted tool context resumes without re-fetching old results", async (t) => {
+  const requests = [];
+  const url = await server(t, async (req, res) => {
+    const body = await json(req);
+    requests.push(body);
+    const rounds = body.messages.filter((m) => m.role === "tool").length;
+    res.setHeader("Content-Type", "application/json");
+    res.end(
+      JSON.stringify({
+        choices: [
+          {
+            message:
+              rounds < 10
+                ? {
+                    tool_calls: [
+                      {
+                        id: `saved-${rounds}`,
+                        function: {
+                          name: "calculate",
+                          arguments: `{"expression":"${rounds}+1"}`,
+                        },
+                      },
+                    ],
+                  }
+                : { content: "已经利用此前结果完成" },
+          },
+        ],
+      }),
+    );
+  });
+  const directory = temporary(t);
+  let core = new Core({ directory });
+  const args = {
+    provider: { ...provider, baseURL: url + "/v1" },
+    model: "test",
+    config: {},
+    settings: { ...settings, toolRoundLimit: 8 },
+    conversationId: "resume",
+  };
+  const user = {
+    id: "user",
+    role: "user",
+    content: "获取十项信息",
+    createdAt: 1,
+  };
+  const first = [];
+  await core.chat({ ...args, messages: [user] }, (e) => first.push(e));
+  assert.equal(requests.length, 8);
+  assert.deepEqual(first.at(-1), {
+    type: "done",
+    reason: "tool-limit",
+    limit: 8,
+  });
+  const reply = {
+    id: "reply",
+    role: "assistant",
+    content: "",
+    createdAt: 2,
+    toolLimit: 8,
+    tools: first.filter((e) => e.type === "tool-result").map((e) => e.call),
+    agentContext: first.findLast((e) => e.type === "context").context,
+  };
+  await core.save({
+    settings: { ...args.settings, providers: [args.provider] },
+    conversations: [{ id: "resume", messages: [user, reply] }],
+  });
+  core = new Core({ directory });
+  const messages = core.load().conversations[0].messages;
+  const second = [];
+  await core.chat(
+    { ...args, messages: [...messages, { role: "user", content: "继续" }] },
+    (e) => second.push(e),
+  );
+  assert.equal(requests[8].messages.filter((m) => m.role === "tool").length, 8);
+  assert.equal(requests.length, 11);
+  assert.deepEqual(
+    second.filter((e) => e.type === "tool-result").map((e) => e.call.id),
+    ["saved-8", "saved-9"],
+  );
+  assert.equal(second.at(-1).reason, undefined);
+  assert.ok(second.some((e) => e.text === "已经利用此前结果完成"));
+});
+test("legacy error replies retain tool results and interrupted calls receive matching error outputs", () => {
+  const messages = wireMessages(
+    [
+      {
+        role: "assistant",
+        content: "已找到资料",
+        error: "旧八轮上限",
+        tools: [
+          {
+            id: "done",
+            name: "calculate",
+            arguments: "{}",
+            status: "done",
+            result: { value: 42 },
+          },
+          {
+            id: "pending",
+            name: "fetch_url",
+            arguments: "{}",
+            status: "running",
+          },
+        ],
+      },
+      { role: "assistant", content: "", error: "纯网络错误" },
+      { role: "user", content: "继续" },
+    ],
+    "system",
+  );
+  const results = messages.filter((m) => m.role === "tool");
+  assert.deepEqual(JSON.parse(results[0].content), { value: 42 });
+  assert.match(JSON.parse(results[1].content).error, /中断/);
+  assert.ok(messages.some((m) => m.content === "已找到资料"));
+  assert.equal(messages.at(-1).content, "继续");
+  const restored = wireMessages(
+    [
+      {
+        role: "assistant",
+        content: "已知部分",
+        interrupted: true,
+        agentContext: [
+          {
+            role: "assistant",
+            content: "已知",
+            tool_calls: [{ id: "lost", name: "calculate", arguments: "{}" }],
+          },
+        ],
+      },
+    ],
+    "s",
+  );
+  assert.equal(restored[2].tool_call_id, "lost");
+  assert.match(restored[2].content, /中断/);
+  assert.equal(restored.at(-1).content, "部分");
+});
+test("native reasoning signatures survive a paused run and a new request for every native protocol", async (t) => {
+  for (const protocol of ["anthropic", "google", "responses"]) {
+    const requests = [];
+    const native =
+      protocol === "anthropic"
+        ? {
+            content: [
+              {
+                type: "thinking",
+                thinking: "已分析",
+                signature: "anth-signed",
+              },
+              {
+                type: "tool_use",
+                id: "signed-call",
+                name: "calculate",
+                input: { expression: "2+2" },
+              },
+            ],
+          }
+        : protocol === "google"
+          ? {
+              candidates: [
+                {
+                  content: {
+                    parts: [
+                      {
+                        functionCall: {
+                          id: "signed-call",
+                          name: "calculate",
+                          args: { expression: "2+2" },
+                        },
+                        thoughtSignature: "gem-signed",
+                      },
+                    ],
+                  },
+                },
+              ],
+            }
+          : {
+              output: [
+                {
+                  type: "reasoning",
+                  encrypted_content: "resp-encrypted",
+                  summary: [],
+                },
+                {
+                  type: "function_call",
+                  id: "item-call",
+                  call_id: "signed-call",
+                  name: "calculate",
+                  arguments: '{"expression":"2+2"}',
+                },
+              ],
+            };
+    const final =
+      protocol === "anthropic"
+        ? { content: [{ type: "text", text: "四" }] }
+        : protocol === "google"
+          ? { candidates: [{ content: { parts: [{ text: "四" }] } }] }
+          : {
+              output: [
+                {
+                  type: "message",
+                  content: [{ type: "output_text", text: "四" }],
+                },
+              ],
+            };
+    const url = await server(t, async (req, res) => {
+      requests.push(await json(req));
+      res.setHeader("Content-Type", "application/json");
+      res.end(JSON.stringify(requests.length === 1 ? native : final));
+    });
+    const core = new Core({ directory: temporary(t) });
+    const args = {
+      provider: { ...provider, protocol, baseURL: url + "/v1" },
+      model: "test",
+      config: {},
+      settings: { ...settings, toolRoundLimit: 1 },
+      conversationId: protocol,
+    };
+    const first = [];
+    await core.chat(
+      { ...args, messages: [{ role: "user", content: "2+2" }] },
+      (e) => first.push(e),
+    );
+    assert.equal(first.at(-1).reason, "tool-limit");
+    const agentContext = JSON.parse(
+      JSON.stringify(first.findLast((e) => e.type === "context").context),
+    );
+    const second = [];
+    await core.chat(
+      {
+        ...args,
+        messages: [
+          { role: "user", content: "2+2" },
+          { role: "assistant", content: "", agentContext },
+          { role: "user", content: "继续" },
+        ],
+      },
+      (e) => second.push(e),
+    );
+    assert.equal(requests.length, 2);
+    const payload = JSON.stringify(requests[1]);
+    assert.match(
+      payload,
+      protocol === "anthropic"
+        ? /anth-signed/
+        : protocol === "google"
+          ? /gem-signed/
+          : /resp-encrypted/,
+    );
+    assert.match(payload, /signed-call/);
+    assert.equal(second.filter((e) => e.type === "tool").length, 0);
+    assert.ok(second.some((e) => e.text === "四"));
+  }
+});
+test("one configured round executes its entire tool batch and pauses before another model request", async (t) => {
+  const { events, requests } = await permissionAgent(t, "always_allow", null, {
+    toolRoundLimit: 1,
+  });
+  assert.equal(requests.length, 1);
+  assert.equal(events.filter((e) => e.type === "tool-result").length, 2);
+  assert.equal(events.findLast((e) => e.type === "context").context.length, 3);
+  assert.deepEqual(events.at(-1), {
+    type: "done",
+    reason: "tool-limit",
+    limit: 1,
+  });
+});
+test("a tool card saved before its context checkpoint recovers the actual result", () => {
+  const messages = wireMessages(
+    [
+      {
+        role: "assistant",
+        content: "",
+        interrupted: true,
+        agentContext: [
+          {
+            role: "assistant",
+            content: "",
+            tool_calls: [{ id: "partial", name: "calculate", arguments: "{}" }],
+          },
+        ],
+        tools: [
+          {
+            id: "partial",
+            name: "calculate",
+            arguments: "{}",
+            status: "done",
+            result: { value: "already-known" },
+          },
+        ],
+      },
+    ],
+    "s",
+  );
+  assert.deepEqual(JSON.parse(messages.at(-1).content), {
+    value: "already-known",
+  });
+});
+test("delayed Auto snapshots cannot overwrite explicit prompt permission", async (t) => {
+  let prompts = 0;
+  const { executed } = await permissionAgent(
+    t,
+    "always_allow",
+    (event, core) => {
+      if (event.type === "context") core.setToolPermission("prompt");
+      if (event.type === "approval") {
+        prompts++;
+        core.approve(event.id, false);
+      }
+    },
+  );
+  assert.equal(prompts, 2);
+  assert.deepEqual(executed, []);
+  // The override must be authoritative even before a stale chat starts.
+  const core = new Core({ directory: temporary(t) });
+  const pending = deferred();
+  const url = await server(t, async (req, res) => {
+    await json(req);
+    res.setHeader("Content-Type", "application/json");
+    res.end(
+      JSON.stringify({
+        choices: [
+          {
+            message: {
+              tool_calls: [
+                {
+                  id: "stale",
+                  function: { name: "stale_guard", arguments: "{}" },
+                },
+              ],
+            },
+          },
+        ],
+      }),
+    );
+  });
+  core.registerTool({
+    name: "stale_guard",
+    title: "guard",
+    description: "guard",
+    group: "test",
+    approval: true,
+    inputSchema: { type: "object" },
+    execute: () => assert.fail("stale Auto must still ask"),
+  });
+  core.setToolPermission("prompt");
+  const chat = core.chat(
+    {
+      provider: { ...provider, baseURL: url + "/v1" },
+      model: "test",
+      config: {},
+      settings: { ...settings, toolPermission: "always_allow" },
+      conversationId: "stale",
+      messages: [],
+    },
+    (e) => {
+      if (e.type === "approval") pending.resolve();
+    },
+  );
+  await pending.promise;
+  core.stop("stale");
+  await chat;
+  assert.equal(core.toolPermission, "prompt");
+});
+test("Anthropic message merging never mutates persisted native blocks", () => {
+  const messages = [
+    {
+      role: "assistant",
+      content: "first",
+      nativeAnthropic: [{ type: "text", text: "first" }],
+    },
+    { role: "assistant", content: "second" },
+  ];
+  const before = structuredClone(messages);
+  const first = buildRequest(
+    { ...provider, protocol: "anthropic" },
+    "test",
+    messages,
+    [],
+    "auto",
+    {},
+  ).body;
+  const second = buildRequest(
+    { ...provider, protocol: "anthropic" },
+    "test",
+    messages,
+    [],
+    "auto",
+    {},
+  ).body;
+  assert.deepEqual(messages, before);
+  assert.deepEqual(first, second);
+});
+function deferred() {
+  let resolve;
+  const promise = new Promise((r) => {
+    resolve = r;
+  });
+  return { promise, resolve };
+}
+test("parallel conversations isolate approvals, completion cleanup and targeted stopping", async (t) => {
+  const url = await server(t, async (req, res) => {
+    const body = await json(req);
+    const name = body.messages.find((m) => m.role === "user").content;
+    res.setHeader("Content-Type", "application/json");
+    res.end(
+      JSON.stringify({
+        choices: [
+          {
+            message: body.messages.some((m) => m.role === "tool")
+              ? { content: `finished-${name}` }
+              : {
+                  tool_calls: [
+                    {
+                      id: `guard-${name}`,
+                      function: {
+                        name: "parallel_guard",
+                        arguments: JSON.stringify({ name }),
+                      },
+                    },
+                  ],
+                },
+          },
+        ],
+      }),
+    );
+  });
+  const core = new Core({ directory: temporary(t) });
+  t.after(() => core.stop());
+  const executed = [];
+  core.registerTool({
+    name: "parallel_guard",
+    title: "guard",
+    description: "guard",
+    group: "test",
+    approval: true,
+    inputSchema: {
+      type: "object",
+      properties: { name: { type: "string" } },
+      required: ["name"],
+    },
+    execute: ({ name }) => {
+      executed.push(name);
+      return name;
+    },
+  });
+  const gates = { a: deferred(), b: deferred() };
+  const events = { a: [], b: [] };
+  const start = (cid) =>
+    core.chat(
+      {
+        provider: { ...provider, baseURL: url + "/v1" },
+        model: "test",
+        config: {},
+        settings,
+        conversationId: cid,
+        messages: [{ role: "user", content: cid }],
+      },
+      (e) => {
+        events[cid].push(e);
+        if (e.type === "approval") gates[cid].resolve(e.id);
+      },
+    );
+  const a = start("a"),
+    b = start("b");
+  const [approvalA, approvalB] = await Promise.all([
+    gates.a.promise,
+    gates.b.promise,
+  ]);
+  assert.equal(core.controllers.size, 2);
+  assert.equal(core.approvals.size, 2);
+  await assert.rejects(start("b"), /当前会话/);
+  core.stop("missing");
+  assert.equal(core.approvals.size, 2);
+  core.stop("a");
+  await a;
+  assert.equal(core.controllers.size, 1);
+  assert.ok(core.controllers.has("b"));
+  assert.equal(core.approvals.size, 1);
+  assert.ok(core.approvals.has(approvalB));
+  core.approve(approvalA, true); // A late click must not revive the stopped run.
+  core.approve(approvalB, true);
+  await b;
+  assert.deepEqual(executed, ["b"]);
+  assert.ok(events.a.some((e) => e.type === "done" && e.text === "stopped"));
+  assert.ok(events.b.some((e) => e.text === "finished-b"));
+  assert.equal(core.controllers.size, 0);
+  assert.equal(core.approvals.size, 0);
+});
+test("disconnect cancellation belongs to its request and cannot abort another conversation", async (t) => {
+  const ready = { a: deferred(), b: deferred() };
+  const responses = {};
+  const url = await server(t, async (req, res) => {
+    const body = await json(req);
+    const cid = body.messages.find((m) => m.role === "user").content;
+    responses[cid] = res;
+    res.writeHead(200, { "Content-Type": "text/event-stream" });
+    res.write(
+      `data: ${JSON.stringify({ choices: [{ delta: { content: `start-${cid}` } }] })}\n\n`,
+    );
+    ready[cid].resolve();
+  });
+  const core = new Core({ directory: temporary(t) });
+  t.after(() => core.stop());
+  const disconnected = new AbortController();
+  const events = { a: [], b: [] };
+  const start = (cid, signal) =>
+    core.chat(
+      {
+        provider: { ...provider, baseURL: url + "/v1" },
+        model: "test",
+        config: {},
+        settings,
+        conversationId: cid,
+        messages: [{ role: "user", content: cid }],
+      },
+      (e) => events[cid].push(e),
+      signal,
+    );
+  const a = start("a", disconnected.signal),
+    b = start("b");
+  await Promise.all([ready.a.promise, ready.b.promise]);
+  disconnected.abort();
+  await a;
+  assert.equal(core.controllers.size, 1);
+  assert.equal(core.controllers.get("b").signal.aborted, false);
+  responses.b.end("data: [DONE]\n\n");
+  await b;
+  assert.ok(events.a.some((e) => e.text === "stopped"));
+  assert.ok(events.b.some((e) => e.text === "start-b"));
+  assert.equal(core.controllers.size, 0);
+  // The old connection's signal must not retain a listener that stops a replacement request.
+  const replacement = start("a");
+  while (!core.controllers.has("a")) await new Promise((r) => setTimeout(r, 1));
+  core.stop();
+  await replacement;
+  assert.equal(core.controllers.size, 0);
+});
+test("all-stop cancels every pending approval without leaving run locks", async (t) => {
+  const core = new Core({ directory: temporary(t) });
+  t.after(() => core.stop());
+  const url = await server(t, async (req, res) => {
+    await json(req);
+    res.setHeader("Content-Type", "application/json");
+    res.end(
+      JSON.stringify({
+        choices: [
+          {
+            message: {
+              tool_calls: [
+                {
+                  id: "guard",
+                  function: { name: "all_guard", arguments: "{}" },
+                },
+              ],
+            },
+          },
+        ],
+      }),
+    );
+  });
+  core.registerTool({
+    name: "all_guard",
+    title: "guard",
+    description: "guard",
+    group: "test",
+    approval: true,
+    inputSchema: { type: "object" },
+    execute: () => assert.fail("stopped approvals must not execute"),
+  });
+  const gates = [deferred(), deferred()];
+  const tasks = gates.map((gate, index) =>
+    core.chat(
+      {
+        provider: { ...provider, baseURL: url + "/v1" },
+        model: "test",
+        config: {},
+        settings,
+        conversationId: `all-${index}`,
+        messages: [],
+      },
+      (e) => {
+        if (e.type === "approval") gate.resolve();
+      },
+    ),
+  );
+  await Promise.all(gates.map((g) => g.promise));
+  core.stop();
+  await Promise.all(tasks);
+  assert.equal(core.controllers.size, 0);
+  assert.equal(core.approvals.size, 0);
 });
 test("AnySearch MCP initializes, calls documented search tool, and rotates multiple imported keys", async (t) => {
   const calls = [];

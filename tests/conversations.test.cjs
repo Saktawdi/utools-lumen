@@ -538,7 +538,7 @@ test("stopping while awaiting the renderer releases locks and ignores late ackno
     },
   );
   assert.equal(core.conversationActions.size, 0);
-  assert.equal(core.controller, null);
+  assert.equal(core.controllers.size, 0);
   core.conversationResult(pending, { id: "a" });
   assert.ok(events.some((e) => e.type === "done" && e.text === "stopped"));
 });

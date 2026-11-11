@@ -113,7 +113,7 @@ function buildRequest(provider, model, messages, tools, effort, config = {}) {
               },
             ]
           : m.nativeAnthropic?.length
-            ? m.nativeAnthropic
+            ? structuredClone(m.nativeAnthropic)
             : [
                 ...(m.content ? [{ type: "text", text: m.content }] : []),
                 ...(m.images || []).map((img) => {
